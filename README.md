@@ -151,3 +151,7 @@ Los archivos originales de otros sistemas no se modificaron.
 - Si nadie supera el ultimo nivel, se mantiene el final de partida anterior sin anunciar una victoria inexistente.
 - Los cronometros y el parkour permanecen congelados durante la transicion y el menu.
 - Se cambiaron solo `scripts/main.gd`, `scripts/ui/renderer.gd` y `scripts/monster/monster_overlay.gd`; no se modificaron los recursos ni las otras animaciones.
+
+## Enlace al video:
+
+https://drive.google.com/drive/folders/1lXUlMvMAuSTV0pSZNp56d0taOreuak5g?usp=sharing
