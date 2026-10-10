@@ -42,3 +42,32 @@ Archivos GDScript cambiados: `scripts/main.gd`, `scripts/game/puzzles.gd`, `scri
 
 Si Git responde `nothing to commit`, primero hay que copiar los archivos del ZIP
 a la carpeta del repositorio; Git no supervisa automaticamente la carpeta Descargas.
+
+
+## Musica ambiental durante parkour
+
+- Pista proporcionada por el usuario: `assets/audio/BackSong.mp3` (originalmente `BackSong.mp3.mpeg`), sin modificar el contenido del audio.
+- Reproduccion automatica al pulsar JUGAR y comenzar un parkour; se repite mientras dure esa fase.
+- No suena durante las preguntas/puzzles, el menu, la pausa, la pantalla ELIMINADO ni el final de partida.
+- Se pausa sin perder la posicion al pausar el juego y se reanuda al continuar.
+- La tecla `M`, que ya activaba/desactivaba efectos, tambien silencia y reanuda la musica.
+- Logica separada en `scripts/audio/background_music.gd` y `BackgroundMusic` en `scenes/main.tscn`: no se modificaron las reglas de juego, los sprites o la animacion del monstruo.
+- **Importar antes de ejecutar**: `godot --headless --editor --path . --import` y despues `godot --path .`.
+
+
+## Corrección de volumen de BackSong
+- La música durante el parkour está ahora en +10 dB sobre el archivo original. La pista de origen es silenciosa (pico aproximado −15 dBFS), por lo que el ajuste anterior de −15 dB dejaba el volumen demasiado bajo.
+- El reproductor inicia al comenzar el parkour y se detiene en cualquier otra fase o pantalla. Se reanuda desde el inicio del tema al volver al parkour.
+- M alterna el sonido. Si no se oye, pulsa M durante el parkour para comprobar que el sonido no haya sido desactivado.
+- En Godot: ejecutar el juego, pulsar JUGAR, comprobar sonido durante el parkour, entrar a un puzzle y comprobar el silencio.
+
+
+## Diagnostico y correccion de musica de fondo (WAV)
+
+- `assets/audio/BackSong.wav`: conversion PCM de 16 bits / 44.1 kHz / estereo del audio original `BackSong.mp3.mpeg`, normalizada para ser audible. Se conserva `BackSong.mp3` como copia de la pista original, sin usarse para reproduccion.
+- `scenes/main.tscn`: BackgroundMusic usa BackSong.wav sin subida artificial de +10 dB.
+- `scripts/audio/background_music.gd`: loop WAV y activacion exclusiva en modo `playing` + fase `parkour`, respetando la tecla M.
+- Menu, acertijos, pausa, transicion ELIMINADO y fin: sin musica. No se modifican las reglas ni los sprites.
+- Mensajes de diagnostico en la salida de Godot: `UMBRAL MUSICA: audio WAV cargado`, `UMBRAL MUSICA: INICIADA en parkour`, `UMBRAL MUSICA: DETENIDA`.
+- Si se imprime `INICIADA` pero no hay sonido, revisar mezclador de volumen de Windows, dispositivo de salida de Godot, y niveles de audio de Godot (Master).
+- IMPORTANTE: descomprimir esta version en una carpeta nueva, abrir esa carpeta concreta y reimportar recursos con `godot --headless --editor --path . --import` antes de ejecutar.
