@@ -1,21 +1,15 @@
-# UMBRAL — Reparación de ventanas y personajes originales
+# UMBRAL — correccion de carga de imagenes
 
-Esta versión corrige el problema del dibujo de cabezas y óvalos en las ventanas.
+Proyecto completo basado en el primer commit con la capa visual del monstruo.
 
-## Correcciones
+## Qué se reparó
+- `scripts/ui/renderer.gd`: se quitaron los `preload()` de 20 PNG que provocaban los errores de parseo antes de terminar la importación.
+- `scripts/monster/monster_overlay.gd`: mantiene la carga directa de PNG de la entrega anterior, solo para las cuatro imágenes necesarias del monstruo.
 
-- El código ya **NO** dibuja nuevas cabezas, círculos, hombros ni óvalos.
-- Las siluetas originales siguen siendo parte de los fondos de horror; los sprites de parkour azul y rojo se conservan sin cambios.
-- Se incluyen nuevas imágenes de cristal **intacto**, obtenidas restaurando las grietas que ya venían en el arte original.
-- El cristal comienza sin grietas (`window_damage=0`) y añade grietas en los niveles 1, 2 y 3.
-- Las nuevas grietas usan PNG con **transparencia y una máscara de exclusión** sobre la cabeza del personaje y el marco. No pueden atravesarlos visualmente.
-- Los fondos originales (`assets/backgrounds/horror_left.png` y `horror_right.png`) se conservan sin modificaciones para poder recuperarlos.
+No se cambiaron sprites, fondos, físicas, turnos, vidas, puzzles ni el arte de tu proyecto. La imagen del monstruo sigue en un único lado, el del jugador activo, con acercamiento gradual por tiempo y vidas perdidas.
 
 ## Abrir
+Descomprime el ZIP, importa `project.godot` en Godot 4 y usa F5. También se incluye el lanzador `JUGAR_UMBRAL.bat`.
 
-1. Extrae este ZIP a una carpeta nueva.
-2. En Godot 4.x, importa `UMBRAL_Ventanas_Reparadas/project.godot`.
-3. Espera a que se importen los recursos y presiona F5.
-4. Comprueba primero la ventana intacta de J2, luego los niveles de daño de J1.
-
-**Nota:** no se ha ejecutado Godot en este entorno; los assets generados, el código y sus rutas se han revisado estáticamente.
+## Estado de comprobación
+Archivos y PNG comprobados, referencias revisadas. No se ha podido ejecutar el motor de Godot en este entorno, por lo que la prueba final dentro del motor sigue pendiente.

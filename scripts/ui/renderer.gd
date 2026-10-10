@@ -4,37 +4,54 @@ const Config = preload("res://scripts/game/config.gd")
 
 var game
 var font: Font
-var horror_left: Texture2D = preload("res://assets/windows/horror_left_intact.png")
-var horror_right: Texture2D = preload("res://assets/windows/horror_right_intact.png")
-var crack_left: Array[Texture2D] = [
-    preload("res://assets/windows/cracks_left_1.png"),
-    preload("res://assets/windows/cracks_left_2.png"),
-    preload("res://assets/windows/cracks_left_3.png")
-]
-var crack_right: Array[Texture2D] = [
-    preload("res://assets/windows/cracks_right_1.png"),
-    preload("res://assets/windows/cracks_right_2.png"),
-    preload("res://assets/windows/cracks_right_3.png")
-]
-var first_stage: Texture2D = preload("res://assets/backgrounds/platform_clean.png")
-var level_backgrounds: Array[Texture2D] = [
-    preload("res://assets/backgrounds/level_02.png"), preload("res://assets/backgrounds/level_03.png"),
-    preload("res://assets/backgrounds/level_04.png"), preload("res://assets/backgrounds/level_05.png"),
-    preload("res://assets/backgrounds/level_06.png"), preload("res://assets/backgrounds/level_07.png"),
-    preload("res://assets/backgrounds/level_08.png"), preload("res://assets/backgrounds/level_09.png"),
-    preload("res://assets/backgrounds/level_10.png")
-]
-# Hojas originales: 9 fotogramas de 40 x 56 px, uno por cada jugador.
+# Carga de las imagenes sin depender de los preloads del importador.
+# No cambia las imagenes, sus posiciones ni el aspecto del juego.
+var horror_left: Texture2D
+var horror_right: Texture2D
+var crack_left: Array[Texture2D] = []
+var crack_right: Array[Texture2D] = []
+var first_stage: Texture2D
+var level_backgrounds: Array[Texture2D] = []
+
+# Dimensiones exactas de los sprites originales: NO SE MODIFICAN.
 const HERO_FRAME_WIDTH: float = 40.0
 const HERO_FRAME_HEIGHT: float = 56.0
 const HERO_FRAME_COUNT: int = 9
-var hero_blue: Texture2D = preload("res://assets/characters/personaje_azul.png")
-var hero_red: Texture2D = preload("res://assets/characters/personaje_rojo.png")
+var hero_blue: Texture2D
+var hero_red: Texture2D
+
+func _read_png(path: String) -> Texture2D:
+    # En una copia recien descomprimida, Godot puede evaluar scripts
+    # antes de haber terminado de construir su cache de importacion.
+    # Image.load_from_file puede leer el PNG fuente directamente.
+    if FileAccess.file_exists(path):
+        var image: Image = Image.load_from_file(path)
+        if image != null and not image.is_empty():
+            return ImageTexture.create_from_image(image)
+    # En una exportacion, Godot podria empaquetar texturas importadas
+    # pero no incluir el PNG fuente como archivo independiente.
+    if ResourceLoader.exists(path):
+        var resource: Resource = ResourceLoader.load(path)
+        if resource is Texture2D:
+            return resource as Texture2D
+    push_error("UMBRAL: no se pudo cargar la imagen: " + path)
+    return null
 
 func _ready() -> void:
     game = get_parent()
     font = ThemeDB.fallback_font
     texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+    horror_left = _read_png("res://assets/windows/horror_left_intact.png")
+    horror_right = _read_png("res://assets/windows/horror_right_intact.png")
+    for n in range(1, 4):
+        crack_left.append(_read_png("res://assets/windows/cracks_left_%d.png" % n))
+        crack_right.append(_read_png("res://assets/windows/cracks_right_%d.png" % n))
+    first_stage = _read_png("res://assets/backgrounds/platform_clean.png")
+    for n in range(2, 11):
+        level_backgrounds.append(_read_png("res://assets/backgrounds/level_%02d.png" % n))
+    hero_blue = _read_png("res://assets/characters/personaje_azul.png")
+    hero_red = _read_png("res://assets/characters/personaje_rojo.png")
     queue_redraw()
 
 func box_fill(x: float,y: float,w: float,h: float,color: Color) -> void:
