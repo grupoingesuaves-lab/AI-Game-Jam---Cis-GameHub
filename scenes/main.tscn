@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=9 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/ui/renderer.gd" id="2_renderer"]
@@ -7,6 +7,8 @@
 [ext_resource type="Script" path="res://scripts/monster/monster_overlay.gd" id="4_monster"]
 [ext_resource type="Script" path="res://scripts/audio/background_music.gd" id="5_background_music"]
 [ext_resource type="AudioStream" path="res://assets/audio/BackSong.wav" id="6_back_song"]
+[ext_resource type="Script" path="res://scripts/monster/life_loss_overlay.gd" id="7_life_loss"]
+[ext_resource type="Script" path="res://scripts/monster/death_close_overlay.gd" id="8_death_close"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -24,3 +26,9 @@ script = ExtResource("4_monster")
 stream = ExtResource("6_back_song")
 volume_db = 0.0
 script = ExtResource("5_background_music")
+
+[node name="LifeLossAnimation" type="Node2D" parent="."]
+script = ExtResource("7_life_loss")
+
+[node name="DeathCloseOverlay" type="Node2D" parent="."]
+script = ExtResource("8_death_close")

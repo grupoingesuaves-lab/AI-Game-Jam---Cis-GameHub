@@ -12,15 +12,24 @@ const PARKOUR_LIMIT = Config.PARKOUR_LIMIT
 const PUZZLE_LIMIT = Config.PUZZLE_LIMIT
 const ROUND_NAMES = Config.ROUND_NAMES
 
-var mode: String = "menu"   # menu, playing, pause, eliminated, end
-# Transicion de eliminacion: salida del monstruo, breve pantalla negra y siguiente turno.
-var elimination_stage: int = 0  # 0 = salida / 1 = mensaje negro
+var mode: String = "menu"   # menu, playing, pause, eliminated, victory_transition, victory, end
+# Eliminacion: 0 = mordisco sobre el vidrio roto, 1 = tentaculos, 2 = aviso negro.
+var elimination_stage: int = 0
 var elimination_elapsed: float = 0.0
-var elimination_exit_seconds: float = 0.75
+var elimination_exit_seconds: float = 0.90
+var elimination_close_seconds: float = 1.00
 var elimination_black_seconds: float = 1.40
 var menu_index: int = 0 # 0 = jugar, 1 = salir
+# Menu de victoria: el monstruo se retira antes de mostrar el resultado.
+const VICTORY_EXIT_SECONDS: float = 0.85
+var victory_transition_elapsed: float = 0.0
+var victory_menu_index: int = 0 # 0 = volver a jugar, 1 = salir
+var victory_winner: int = -1 # -1 = empate; 0/1 = ganador
 var phase: String = "parkour" # parkour, puzzle
 var active_player: int = 0
+# El primero de cada ronda fija la marca; el segundo debe igualarla o mejorarla.
+# Ronda 1: J1 -> J2; ronda 2: J2 -> J1; y asi sucesivamente.
+var round_leader: int = 0
 var round_index: int = 0
 var hearts: Array[int] = [MAX_HEARTS, MAX_HEARTS]
 var points: Array[int] = [0, 0]
@@ -29,8 +38,8 @@ var window_damage: Array[int] = [0, 0]
 var round_success: Array[bool] = [false, false]
 var parkour_remaining: float = PARKOUR_LIMIT
 var parkour_limit: float = PARKOUR_LIMIT
-var rival_parkour_limit: float = PARKOUR_LIMIT
-var first_parkour_record: float = -1.0
+var challenger_parkour_limit: float = PARKOUR_LIMIT
+var leader_parkour_record: float = -1.0
 var puzzle_remaining: float = PUZZLE_LIMIT
 var elapsed: float = 0.0
 var shake: float = 0.0
@@ -90,6 +99,19 @@ func _input(event: InputEvent) -> void:
         elif key == KEY_R:
             mode = "menu"
         return
+    if mode == "victory":
+        if key == KEY_UP or key == KEY_W:
+            victory_menu_index = maxi(0, victory_menu_index - 1)
+        elif key == KEY_DOWN or key == KEY_S:
+            victory_menu_index = mini(1, victory_menu_index + 1)
+        elif key == KEY_ESCAPE:
+            get_tree().quit()
+        elif key == KEY_ENTER or key == KEY_SPACE:
+            if victory_menu_index == 0:
+                new_game()
+            else:
+                get_tree().quit()
+        return
     if mode == "end":
         if key == KEY_ENTER or key == KEY_SPACE:
             new_game()
@@ -125,6 +147,9 @@ func key_to_number(key: int) -> int:
 
 func new_game() -> void:
     menu_index = 0
+    victory_menu_index = 0
+    victory_winner = -1
+    victory_transition_elapsed = 0.0
     elimination_stage = 0
     elimination_elapsed = 0.0
     hearts = [MAX_HEARTS, MAX_HEARTS]
@@ -133,9 +158,10 @@ func new_game() -> void:
     window_damage = [0, 0]
     round_success = [false, false]
     round_index = 0
-    active_player = 0
-    rival_parkour_limit = PARKOUR_LIMIT
-    first_parkour_record = -1.0
+    round_leader = 0
+    active_player = round_leader
+    challenger_parkour_limit = PARKOUR_LIMIT
+    leader_parkour_record = -1.0
     elapsed = 0.0
     fear = 0.0
     mode = "playing"
@@ -149,7 +175,8 @@ func start_turn() -> void:
         return
     attempts = 0
     phase = "parkour"
-    parkour_limit = PARKOUR_LIMIT if active_player == 0 else rival_parkour_limit
+    # El primero de la ronda tiene 30 s; el rival recibe la marca fijada.
+    parkour_limit = PARKOUR_LIMIT if active_player == round_leader else challenger_parkour_limit
     parkour_remaining = parkour_limit
     puzzle_remaining = PUZZLE_LIMIT
     puzzle.reset_puzzle()
@@ -157,8 +184,10 @@ func start_turn() -> void:
 
 func restart_round_after_loss() -> void:
     # El jugador continua en el MISMO nivel. Se reinician los dos relojes.
-    if active_player == 0:
-        first_parkour_record = -1.0
+    if active_player == round_leader:
+        # Una marca previa deja de ser valida al reiniciar el intento del lider.
+        leader_parkour_record = -1.0
+        challenger_parkour_limit = PARKOUR_LIMIT
     phase = "parkour"
     parkour_remaining = parkour_limit
     puzzle_remaining = PUZZLE_LIMIT
@@ -184,8 +213,7 @@ func lose_life(reason: String, restart_entire_round: bool, extra_damage: int = 0
     damage_window(active_player, 1 + extra_damage)
     sound.play_tone(145.0, 0.23)
     if hearts[active_player] <= 0:
-        # No transferimos el turno aun: primero sale el monstruo y
-        # se muestra ELIMINADO. Asi no se salta la animacion.
+        # No cambiar turno hasta terminar mordisco, cierre y aviso negro.
         announce("SIN VIDAS - TURNO PERDIDO")
         elimination_stage = 0
         elimination_elapsed = 0.0
@@ -208,9 +236,10 @@ func puzzle_timeout() -> void:
 func reach_parkour_finish() -> void:
     if phase != "parkour" or mode != "playing":
         return
-    if active_player == 0:
-        first_parkour_record = clampf(parkour_limit - parkour_remaining, 0.1, PARKOUR_LIMIT)
-        rival_parkour_limit = first_parkour_record
+    if active_player == round_leader:
+        # Esta marca solo corresponde al parkour; el puzzle conserva sus 60 s.
+        leader_parkour_record = clampf(parkour_limit - parkour_remaining, 0.1, PARKOUR_LIMIT)
+        challenger_parkour_limit = leader_parkour_record
     phase = "puzzle"
     puzzle_remaining = PUZZLE_LIMIT
     puzzle.configure_puzzle()
@@ -230,46 +259,84 @@ func complete_turn(success: bool) -> void:
     if mode != "playing":
         return
     round_success[active_player] = success
-    if active_player == 0:
-        # Si el primer jugador no supero el parkour, el rival recibe 120 s.
-        if first_parkour_record < 0.0:
-            rival_parkour_limit = PARKOUR_LIMIT
-        active_player = 1
-        if hearts[1] <= 0:
+    if active_player == round_leader:
+        # Si el lider no consiguio terminar el parkour, el rival tiene 30 s.
+        if leader_parkour_record < 0.0:
+            challenger_parkour_limit = PARKOUR_LIMIT
+        active_player = 1 - round_leader
+        if hearts[active_player] <= 0:
             finish_round()
         else:
             start_turn()
-            announce("JUGADOR 2 - %.2f S PARA EL PARKOUR" % parkour_limit)
+            announce("JUGADOR %d - %.2f S PARA EL PARKOUR" % [active_player + 1, parkour_limit])
         return
     finish_round()
 
 func finish_round() -> void:
+    if round_index + 1 >= MAX_ROUNDS:
+        # Mantener round_index = 9 durante la transicion y el menu de victoria,
+        # pues los dibujantes usan round_index para consultar el ultimo nivel.
+        # Se llega aqui DESPUES del turno del segundo jugador de la ronda.
+        # Con un jugador eliminado, su turno se omite; en ambos casos,
+        # alguien debe haber superado el ultimo puzzle para ganar.
+        if round_success[0] or round_success[1]:
+            start_victory()
+        else:
+            mode = "end"  # Nadie supero el nivel final: no anunciar victoria.
+        return
     round_index += 1
-    if round_index >= MAX_ROUNDS or (hearts[0] <= 0 and hearts[1] <= 0):
+    if hearts[0] <= 0 and hearts[1] <= 0:
         mode = "end"
         return
-    # Se permite continuar a un jugador superviviente; el jugador sin vidas se salta.
-    active_player = 0 if hearts[0] > 0 else 1
-    first_parkour_record = -1.0
-    rival_parkour_limit = PARKOUR_LIMIT
+    # Quien jugo segundo abre la siguiente ronda y establece la nueva marca.
+    round_leader = 1 - round_leader
+    # Si ese jugador ya fue eliminado, el superviviente abre la ronda.
+    if hearts[round_leader] <= 0:
+        round_leader = 1 - round_leader
+    active_player = round_leader
+    leader_parkour_record = -1.0
+    challenger_parkour_limit = PARKOUR_LIMIT
     round_success = [false, false]
     stage.build_level()
     start_turn()
-    announce("RONDA %d / %d - %s" % [round_index + 1, MAX_ROUNDS, ROUND_NAMES[round_index]])
+    announce("RONDA %d / %d - %s - JUGADOR %d FIJA EL TIEMPO" % [round_index + 1, MAX_ROUNDS, ROUND_NAMES[round_index], active_player + 1])
+
+func start_victory() -> void:
+    # El ganador se determina SOLO por las vidas restantes, no por puntos.
+    if hearts[0] > hearts[1]:
+        victory_winner = 0
+    elif hearts[1] > hearts[0]:
+        victory_winner = 1
+    else:
+        victory_winner = -1
+    victory_menu_index = 0
+    victory_transition_elapsed = 0.0
+    mode = "victory_transition"
 
 func _process(delta: float) -> void:
     var dt: float = minf(delta, 0.04)
+    if mode == "victory_transition":
+        # Congelar fisica, acertijos y cronometros mientras sale el monstruo.
+        victory_transition_elapsed += dt
+        if victory_transition_elapsed >= VICTORY_EXIT_SECONDS:
+            victory_transition_elapsed = VICTORY_EXIT_SECONDS
+            mode = "victory"
+        renderer.queue_redraw()
+        return
     if mode == "eliminated":
         # Los relojes, colisiones y puzzles quedan congelados durante el aviso.
         elimination_elapsed += dt
         if elimination_stage == 0 and elimination_elapsed >= elimination_exit_seconds:
-            elimination_stage = 1
+            elimination_stage = 1  # El mordisco da paso al cierre de tentaculos.
             elimination_elapsed = 0.0
-        elif elimination_stage == 1 and elimination_elapsed >= elimination_black_seconds:
+        elif elimination_stage == 1 and elimination_elapsed >= elimination_close_seconds:
+            elimination_stage = 2  # Pantalla completamente negra + ELIMINADO.
+            elimination_elapsed = 0.0
+        elif elimination_stage == 2 and elimination_elapsed >= elimination_black_seconds:
             elimination_elapsed = 0.0
             elimination_stage = 0
             mode = "playing"
-            # Se utiliza el flujo de turnos original, sin duplicarlo.
+            # Conservar el flujo de turnos original, sin duplicarlo.
             complete_turn(false)
         renderer.queue_redraw()
         return

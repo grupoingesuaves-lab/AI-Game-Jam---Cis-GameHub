@@ -16,6 +16,7 @@ const FADE_IN_SPEED: float = 2.3
 const TRANSFER_HIDE_DURATION: float = 0.28
 const TRANSFER_SHOW_DURATION: float = 0.44
 const TRANSFER_SLIDE: float = 42.0
+const VICTORY_EXIT_SECONDS: float = 0.85
 
 var game: Node2D
 var previous_player: int = -1
@@ -70,22 +71,33 @@ func _load_current_animation(player: int, step: int) -> void:
 func _process(delta: float) -> void:
     if game == null:
         return
-    # Durante la eliminacion termina de salir por el borde exterior de su ventana.
-    # En la pantalla negra se oculta, y el siguiente jugador lo recibe de cero.
+    # Cuando se elimina un jugador solo se muestra el mordisco, no la
+    # antigua salida lateral. Reiniciar la transferencia para el proximo turno.
     if game.get("mode") == "eliminated":
-        if int(game.get("elimination_stage")) == 1:
-            previous_player = -1
-            transfer_phase = 0
-            transfer_destination = -1
-            loaded_player = -1
-            loaded_step = -1
-        else:
-            animation_clock += minf(delta, 0.08)
+        previous_player = -1
+        transfer_phase = 0
+        transfer_elapsed = 0.0
+        transfer_destination = -1
+        loaded_player = -1
+        loaded_step = -1
+        appearance = 0.0
+        queue_redraw()
+        return
+    # Al completar el nivel 10, el monstruo se retira del lado activo.
+    # No tocar la animacion de cambio entre jugadores durante las rondas.
+    if game.get("mode") == "victory_transition":
+        var last_player: int = clampi(int(game.get("active_player")), 0, 1)
+        if previous_player != last_player or loaded_player != last_player:
+            previous_player = last_player
+            _load_current_animation(last_player, clampi(roundi(proximity * float(STEPS - 1)), 0, STEPS - 1))
+        transfer_phase = 0
+        appearance = 1.0
+        animation_clock += minf(delta, 0.08)
         queue_redraw()
         return
     # El monstruo no aparece en el menu ni en la pantalla final.
     if game.get("mode") != "playing":
-        if game.get("mode") == "menu" or game.get("mode") == "end":
+        if game.get("mode") == "menu" or game.get("mode") == "end" or game.get("mode") == "victory":
             previous_player = -1
             active_seconds = 0.0
             appearance = 0.0
@@ -154,10 +166,18 @@ func _draw() -> void:
     if game == null or previous_player < 0:
         return
     var current_mode: String = str(game.get("mode"))
-    if current_mode != "playing" and current_mode != "eliminated":
+    var is_victory_exit: bool = current_mode == "victory_transition"
+    if current_mode != "playing" and not is_victory_exit:
         return
-    if current_mode == "eliminated" and int(game.get("elimination_stage")) != 0:
-        return
+    # Mientras el mordisco ocupa el vidrio, ocultar el monstruo en reposo.
+    # La capa del mordisco se controla por separado y, al terminar,
+    # este monstruo vuelve a mostrarse sin reiniciar su animacion.
+    var bite_overlay: Node = get_parent().get_node_or_null("LifeLossAnimation")
+    if bite_overlay != null:
+        var bite_active: bool = bool(bite_overlay.get("playing_hit"))
+        var bite_player: int = int(bite_overlay.get("hit_player"))
+        if bite_active and bite_player == previous_player:
+            return
     if loaded_player != previous_player or loaded_frames.size() != ANIMATION_FRAMES:
         return
     var frame: int = int(animation_clock * 2.0) % ANIMATION_FRAMES
@@ -171,14 +191,12 @@ func _draw() -> void:
     var alpha: float = 0.92 * appearance
     var offset_x: float = 0.0
     var direction: float = 1.0 if previous_player == 0 else -1.0
-    if current_mode == "eliminated":
-        # Animacion de salida completa: izquierda sale por la izquierda,
-        # derecha por la derecha. Nunca invade la ventana del rival.
-        var exit_seconds: float = float(game.get("elimination_exit_seconds"))
-        var exit_t: float = clampf(float(game.get("elimination_elapsed")) / exit_seconds, 0.0, 1.0)
-        var slide_t: float = exit_t * exit_t * (3.0 - 2.0 * exit_t)
-        offset_x = (-1.0 if previous_player == 0 else 1.0) * 900.0 * slide_t
-        alpha *= 1.0 - clampf((exit_t - 0.55) / 0.45, 0.0, 1.0)
+    if is_victory_exit:
+        # Deslizarse fuera de la ventana y desvanecerse antes del menu final.
+        var exit_duration: float = maxf(0.01, VICTORY_EXIT_SECONDS)
+        var exit_t: float = clampf(float(game.get("victory_transition_elapsed")) / exit_duration, 0.0, 1.0)
+        alpha *= (1.0 - exit_t) * (1.0 - exit_t)
+        offset_x = direction * (PANEL_WIDTH * 0.62) * exit_t * exit_t
     elif transfer_phase == 1:
         var hide_t: float = clampf(transfer_elapsed / TRANSFER_HIDE_DURATION, 0.0, 1.0)
         alpha *= 1.0 - hide_t

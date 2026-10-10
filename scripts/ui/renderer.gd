@@ -86,14 +86,6 @@ func draw_window(player: int) -> void:
     draw_texture(texture, Vector2(float(player) * Config.PANEL_W, 0.0))
 
 func _draw() -> void:
-    if game.mode == "eliminated" and game.elimination_stage == 1:
-        # Corte negro de pantalla completa para el mensaje de eliminacion.
-        box_fill(0.0, 0.0, Config.SCREEN_W, Config.SCREEN_H, Color.BLACK)
-        text_at("ELIMINADO", Config.SCREEN_W * 0.5, Config.SCREEN_H * 0.5,
-                78, Color("dbe9f6"), true)
-        text_at("JUGADOR %d" % (game.active_player + 1), Config.SCREEN_W * 0.5,
-                Config.SCREEN_H * 0.5 + 66.0, 28, Color("8095ab"), true)
-        return
     draw_texture_rect(horror_left,Rect2(0.0,0.0,768.0,450.0),false)
     draw_texture_rect(horror_right,Rect2(768.0,0.0,768.0,450.0),false)
     for player in range(2):
@@ -120,6 +112,8 @@ func _draw() -> void:
         draw_start_menu()
     elif game.mode == "pause":
         draw_modal("PAUSA","CRONOMETROS DETENIDOS","ENTER / ESC - CONTINUAR","R - VOLVER AL MENU")
+    elif game.mode == "victory":
+        draw_victory_menu()
     elif game.mode == "end":
         var winner: String = "EMPATE"
         if game.points[0] > game.points[1]:
@@ -127,6 +121,18 @@ func _draw() -> void:
         elif game.points[1] > game.points[0]:
             winner = "JUGADOR 2"
         draw_modal("FIN DE PARTIDA","GANADOR: " + winner,"ENTER - JUGAR OTRA VEZ","PUNTOS: %d - %d   /   RONDAS %d - %d" % [game.points[0],game.points[1],game.victories[0],game.victories[1]])
+
+    elif game.mode == "eliminated" and game.elimination_stage == 2:
+        # El aviso final cubre la vista superior COMPLETA del eliminado,
+        # igual que los tentaculos. El otro jugador y la zona inferior no se tapan.
+        var player: int = clampi(game.active_player, 0, 1)
+        var panel: Rect2 = Rect2(float(player) * Config.PANEL_W,
+                0.0, Config.PANEL_W, Config.STAGE_TOP)
+        draw_rect(panel, Color.BLACK)
+        text_at("ELIMINADO", panel.position.x + panel.size.x * 0.5,
+                panel.position.y + panel.size.y * 0.52, 43, Color("dbe9f6"), true)
+        text_at("JUGADOR %d" % (player + 1), panel.position.x + panel.size.x * 0.5,
+                panel.position.y + panel.size.y * 0.69, 24, Color("8095ab"), true)
 
 func draw_start_menu() -> void:
     if menu_background != null:
@@ -346,8 +352,38 @@ func draw_waiting(ox: float,side: int) -> void:
     text_at("TURNO DEL JUGADOR %d" % (game.active_player+1),ox+384.0,732.0,26,Color(0.51,0.65,0.86,pulse),true)
     text_at("RONDA %d DE 10" % (game.round_index+1),ox+384.0,782.0,19,Color("7b8da9"),true)
     text_at("VIDAS %d  -  PUNTOS %d" % [game.hearts[side],game.points[side]],ox+384.0,832.0,18,Color("6f829a"),true)
-    if side == 1 and game.active_player == 0:
+    if game.mode == "playing" and game.active_player == game.round_leader and game.hearts[side] > 0:
         text_at("HEREDARAS EL TIEMPO USADO EN EL PARKOUR",ox+384.0,869.0,16,Color("8ba1bf"),true)
+
+func draw_victory_menu() -> void:
+    # Cubre la partida solo al terminar el nivel 10; el monstruo ya se fue.
+    box_fill(0.0, 0.0, Config.SCREEN_W, Config.SCREEN_H, Color(0.005, 0.015, 0.038, 0.96))
+    box_fill(311.0, 151.0, 914.0, 745.0, Color("07111f"))
+    panel_line(311.0, 151.0, 914.0, 745.0, Color("3e90bd"), 4.0)
+    panel_line(327.0, 167.0, 882.0, 713.0, Color("193b5b"), 2.0)
+    box_fill(348.0, 192.0, 840.0, 5.0, Color("45b5e1"))
+    text_at("UMBRAL", 768.0, 300.0, 67, Color("67cef8"), true)
+    text_at("NIVEL 10 COMPLETADO", 768.0, 355.0, 27, Color("a4c3da"), true)
+    var result: String = "EMPATE"
+    if int(game.victory_winner) >= 0:
+        result = "GANADOR: JUGADOR %d" % (int(game.victory_winner) + 1)
+    text_at(result, 768.0, 452.0, 46, Color("f3d18a"), true)
+    text_at("VIDAS RESTANTES", 768.0, 514.0, 23, Color("9eb4cd"), true)
+    text_at("JUGADOR 1: %d" % game.hearts[0], 593.0, 567.0, 26, Color("d4e9f8"), true)
+    text_at("JUGADOR 2: %d" % game.hearts[1], 943.0, 567.0, 26, Color("d4e9f8"), true)
+    var labels: Array[String] = ["VOLVER A JUGAR", "SALIR"]
+    for i in range(2):
+        var rect: Rect2 = Rect2(494.0, 628.0 + float(i) * 91.0, 548.0, 70.0)
+        var selected: bool = game.victory_menu_index == i
+        if selected:
+            box_fill(rect.position.x, rect.position.y, rect.size.x, rect.size.y, Color("10304a"))
+            panel_line(rect.position.x, rect.position.y, rect.size.x, rect.size.y, Color("63cfff"), 3.0)
+        else:
+            panel_line(rect.position.x, rect.position.y, rect.size.x, rect.size.y, Color("2b485d"), 2.0)
+        text_at(labels[i], 768.0, rect.position.y + 45.0, 30,
+                Color("e7f7ff") if selected else Color("91a8bb"), true)
+    text_at("FLECHAS / W S: ELEGIR   -   ENTER: CONFIRMAR", 768.0, 841.0,
+            18, Color("8ca6bb"), true)
 
 func draw_modal(title: String,subtitle: String,action: String,detail: String) -> void:
     box_fill(0.0,0.0,Config.SCREEN_W,Config.SCREEN_H,Color(0.0,0.0,0.0,0.76))

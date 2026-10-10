@@ -6,7 +6,7 @@ Proyecto completo basado en el primer commit con la capa visual del monstruo.
 - `scripts/ui/renderer.gd`: se quitaron los `preload()` de 20 PNG que provocaban los errores de parseo antes de terminar la importación.
 - `scripts/monster/monster_overlay.gd`: mantiene la carga directa de PNG de la entrega anterior, solo para las cuatro imágenes necesarias del monstruo.
 
-No se cambiaron sprites, fondos, físicas, turnos, vidas, puzzles ni el arte de tu proyecto. La imagen del monstruo sigue en un único lado, el del jugador activo, con acercamiento gradual por tiempo y vidas perdidas.
+En la correccion original de las imagenes no se cambiaron sprites, fondos, físicas, vidas, puzzles ni el arte del proyecto. Los cambios de turnos y tiempo de esta entrega se describen al final. La imagen del monstruo sigue en un único lado, el del jugador activo, con acercamiento gradual por tiempo y vidas perdidas.
 
 ## Abrir
 Descomprime el ZIP, importa `project.godot` en Godot 4 y usa F5. También se incluye el lanzador `JUGAR_UMBRAL.bat`.
@@ -71,3 +71,83 @@ a la carpeta del repositorio; Git no supervisa automaticamente la carpeta Descar
 - Mensajes de diagnostico en la salida de Godot: `UMBRAL MUSICA: audio WAV cargado`, `UMBRAL MUSICA: INICIADA en parkour`, `UMBRAL MUSICA: DETENIDA`.
 - Si se imprime `INICIADA` pero no hay sonido, revisar mezclador de volumen de Windows, dispositivo de salida de Godot, y niveles de audio de Godot (Master).
 - IMPORTANTE: descomprimir esta version en una carpeta nueva, abrir esa carpeta concreta y reimportar recursos con `godot --headless --editor --path . --import` antes de ejecutar.
+
+
+## Nuevo sistema de turnos y tiempo (30 segundos)
+
+- El tiempo base de **parkour** pasa de 120 a **30 segundos**. Los puzzles mantienen sus 60 segundos.
+- **Ronda 1:** J1 abre (30 s), registra su tiempo de parkour; J2 hace el mismo nivel con ese limite.
+- **Ronda 2:** J2 abre (30 s), registra su tiempo; J1 hace el mismo nivel con ese limite.
+- **Rondas posteriores:** el jugador que fue segundo inicia la siguiente ronda, alternando ambos.
+- El registro se obtiene al terminar el parkour, antes del puzzle, como en el juego original.
+- Si el primero no termina el parkour, el segundo dispone de 30 s. Los reintentos del primero vuelven a medir desde cero.
+- Se conservan las vidas, los reintentos, los acertijos diferentes, las animaciones de eliminacion y la musica solo durante parkour.
+- Si un jugador queda definitivamente eliminado, se omite su turno y el superviviente sigue con 30 s de limite base por ronda.
+
+### Probar en PowerShell (en la carpeta que contiene project.godot)
+
+```powershell
+godot --headless --editor --path . --import
+godot --path .
+```
+
+
+## Mordisco dentro de la ventana y muerte definitiva
+
+- Si un jugador pierde una vida, el mordisco se dibuja **solo dentro del vidrio** de su ventana (se recorta en los bordes del rectangulo superior).
+- Si pierde la ultima vida, **no hay salida lateral** del monstruo: el mordisco crece, atraviesa el marco y cubre parte del nivel de ese jugador, sin invadir el panel del rival.
+- Despues se reproduce el cierre de **6 fotogramas de tentaculos** de la imagen facilitada, con fondo transparente y oscurecimiento progresivo de toda la pantalla.
+- El cierre termina en una pantalla negra con el texto `ELIMINADO` y despues continua automaticamente el flujo de turnos que ya tenia UMBRAL.
+- Se preservan musica, 30 segundos, turnos alternos, puzzles, sprites y reglas.
+
+### Archivos modificados
+
+- `scripts/monster/life_loss_overlay.gd`: recorte del mordisco normal y mordisco final ampliado.
+- `scripts/monster/monster_overlay.gd`: elimina SOLO la salida lateral durante la muerte definitiva.
+- `scripts/main.gd`: agrega una etapa visual entre mordisco y pantalla negra.
+- `scripts/ui/renderer.gd`: mueve el cartel negro a la etapa final.
+- `scenes/main.tscn`: incorpora la nueva capa de cierre.
+
+### Archivos nuevos
+
+- `scripts/monster/death_close_overlay.gd`
+- `assets/monster/death_close/close_0.png` a `close_5.png`
+
+Los archivos originales de otros sistemas no se modificaron.
+
+
+## Ajuste: efectos solamente en la ventana del jugador que pierde
+
+- Mordisco normal y mortal: recortados al vidrio real de su lado.
+- El mordisco definitivo **no** atraviesa ni el marco ni el area de parkour.
+- Cierre de tentaculos: solamente dentro del vidrio del jugador eliminado.
+- La fase negra final y el texto ELIMINADO se muestran en ese mismo vidrio.
+- La ventana del otro jugador y la zona inferior quedan visibles.
+- No se han modificado turnos, puntajes, fisicas, cronometros, musica ni sprites.
+- Scripts modificados exclusivamente: `scripts/monster/life_loss_overlay.gd`,
+  `scripts/monster/death_close_overlay.gd`, `scripts/ui/renderer.gd`.
+
+
+## Ajuste visual (mordisco + tentaculos en panel superior)
+
+- Cuando un jugador pierde una vida, la animacion habitual del monstruo se oculta mientras se reproduce el mordisco. Al terminar, vuelve automaticamente.
+- **El mordisco sigue limitado al vidrio interior del jugador afectado**, igual que en la version anterior.
+- Si esa era su ultima vida, tras el mordisco se reproduce el cierre de tentaculos en **toda la seccion superior de su panel: 768 x 450 px**, desde el borde superior hasta la separacion con el parkour.
+- El oscurecimiento final y el texto ELIMINADO cubren esa misma seccion superior.
+- En ningun momento los efectos de cierre invaden el panel del otro jugador.
+- Se mantuvieron los tiempos (30 segundos), turnos alternos, vida, puzzles, musica, menu y sprites tal cual estaban.
+- Archivos de codigo modificados: `scripts/monster/monster_overlay.gd`, `scripts/monster/death_close_overlay.gd`, `scripts/ui/renderer.gd`.
+
+
+
+## NUEVO: MENU DE VICTORIA AL TERMINAR EL NIVEL 10
+
+- El juego espera a que ambos jugadores vivos terminen sus turnos del nivel 10.
+- Si el otro jugador ya fue eliminado, muestra la victoria cuando el superviviente supera el puzzle final.
+- Si un jugador termina el nivel 10 y el otro pierde su ultima vida, primero se completa la animacion de eliminacion y despues aparece la victoria.
+- Se compara **solo el numero de vidas restantes**: gana el jugador que conserve mas; si son iguales, **EMPATE**.
+- El monstruo se retira durante 0.85 s antes de abrir el menu final.
+- El menu permite **VOLVER A JUGAR** o **SALIR**: flechas (o W/S), ENTER/ESPACIO para elegir, ESC para salir.
+- Si nadie supera el ultimo nivel, se mantiene el final de partida anterior sin anunciar una victoria inexistente.
+- Los cronometros y el parkour permanecen congelados durante la transicion y el menu.
+- Se cambiaron solo `scripts/main.gd`, `scripts/ui/renderer.gd` y `scripts/monster/monster_overlay.gd`; no se modificaron los recursos ni las otras animaciones.
