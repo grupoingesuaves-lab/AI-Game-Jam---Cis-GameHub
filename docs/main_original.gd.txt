@@ -1,0 +1,890 @@
+extends Node2D
+## UMBRAL: DOS TURNOS - EDICION DIEZ RONDAS
+## Compatible con Godot 4.x. Un solo proyecto para Windows y Web.
+## Escenario local de 768 x 574; empieza en Y=450 dentro del lienzo 1536x1024.
+
+const SCREEN_W: float = 1536.0
+const SCREEN_H: float = 1024.0
+const PANEL_W: float = 768.0
+const STAGE_TOP: float = 450.0
+const MAX_ROUNDS: int = 10
+const MAX_HEARTS: int = 3
+const PARKOUR_LIMIT: float = 120.0
+const PUZZLE_LIMIT: float = 60.0
+const GRAVITY: float = 1050.0
+const SPEED: float = 275.0
+const JUMP: float = -500.0
+
+const ROUND_NAMES: Array[String] = [
+    "LA GRUA", "BOSQUE EMBRUJADO", "CATACUMBAS", "FABRICA ABANDONADA",
+    "CIUDAD NEON", "CUEVA DE CRISTALES", "PUERTO FANTASMA",
+    "VOLCAN", "CASTILLO DE HIELO", "TEMPLO DEL DESIERTO"
+]
+const STAGE_COLORS: Array[Color] = [
+    Color("d6b249"), Color("70c58c"), Color("b68c75"), Color("d9a44c"),
+    Color("ed59bc"), Color("58e4de"), Color("7db6a0"),
+    Color("ff9a40"), Color("9ed6f8"), Color("f1bb75")
+]
+
+var horror_left: Texture2D = preload("res://assets/horror_left.png")
+var horror_right: Texture2D = preload("res://assets/horror_right.png")
+var first_stage: Texture2D = preload("res://assets/platform_clean.png")
+var level_backgrounds: Array[Texture2D] = [
+    preload("res://assets/level_02.png"), preload("res://assets/level_03.png"),
+    preload("res://assets/level_04.png"), preload("res://assets/level_05.png"),
+    preload("res://assets/level_06.png"), preload("res://assets/level_07.png"),
+    preload("res://assets/level_08.png"), preload("res://assets/level_09.png"),
+    preload("res://assets/level_10.png")
+]
+var runner: Array[Texture2D] = [
+    preload("res://assets/runner_0.png"), preload("res://assets/runner_1.png"),
+    preload("res://assets/runner_2.png"), preload("res://assets/runner_3.png"),
+    preload("res://assets/runner_4.png"), preload("res://assets/runner_5.png")
+]
+
+var font: Font
+var mode: String = "menu"   # menu, playing, pause, end
+var phase: String = "parkour" # parkour, puzzle
+var active_player: int = 0
+var round_index: int = 0
+var hearts: Array[int] = [MAX_HEARTS, MAX_HEARTS]
+var points: Array[int] = [0, 0]
+var victories: Array[int] = [0, 0]
+var window_damage: Array[int] = [0, 0]
+var round_success: Array[bool] = [false, false]
+var parkour_remaining: float = PARKOUR_LIMIT
+var parkour_limit: float = PARKOUR_LIMIT
+var rival_parkour_limit: float = PARKOUR_LIMIT
+var first_parkour_record: float = -1.0
+var puzzle_remaining: float = PUZZLE_LIMIT
+var elapsed: float = 0.0
+var character_pos: Vector2 = Vector2.ZERO
+var character_vel: Vector2 = Vector2.ZERO
+var grounded: bool = false
+var jump_held: bool = false
+var facing: int = 1
+var anim_clock: float = 0.0
+var shake: float = 0.0
+var flash: float = 0.0
+var fear: float = 0.0
+var message: String = ""
+var message_left: float = 0.0
+var attempts: int = 0
+
+var fixed_platforms: Array[Rect2] = []
+var moving_platforms: Array[Dictionary] = []
+var spike_zones: Array[Rect2] = []
+var saws: Array[Dictionary] = []
+
+var puzzle_kind: String = "sequence"
+var puzzle_title: String = ""
+var puzzle_hint: String = ""
+var puzzle_sequence: Array[int] = []
+var puzzle_step: int = 0
+var puzzle_show_for: float = 0.0
+var puzzle_answer: String = ""
+var puzzle_entry: String = ""
+var puzzle_switches: Array[int] = []
+var puzzle_target: Array[int] = []
+var puzzle_wrong: float = 0.0
+
+var particles: Array[Dictionary] = []
+var sound_enabled: bool = true
+var audio_player: AudioStreamPlayer
+var audio_playback: AudioStreamGeneratorPlayback
+var tone_hz: float = 0.0
+var tone_samples_left: int = 0
+var tone_phase: float = 0.0
+
+func _ready() -> void:
+    font = ThemeDB.fallback_font
+    randomize()
+    audio_player = AudioStreamPlayer.new()
+    var generator: AudioStreamGenerator = AudioStreamGenerator.new()
+    generator.mix_rate = 22050.0
+    generator.buffer_length = 0.25
+    audio_player.stream = generator
+    audio_player.volume_db = -22.0
+    add_child(audio_player)
+    audio_player.play()
+    audio_playback = audio_player.get_stream_playback() as AudioStreamGeneratorPlayback
+    build_level()
+    set_process(true)
+    set_process_input(true)
+
+func _input(event: InputEvent) -> void:
+    if not (event is InputEventKey):
+        return
+    var keyboard_event: InputEventKey = event as InputEventKey
+    if not keyboard_event.pressed or keyboard_event.echo:
+        return
+    var key: int = keyboard_event.keycode
+    if key == KEY_M:
+        sound_enabled = not sound_enabled
+    if mode == "menu":
+        if key == KEY_ENTER or key == KEY_SPACE:
+            new_game()
+        return
+    if mode == "pause":
+        if key == KEY_ESCAPE or key == KEY_P or key == KEY_ENTER:
+            mode = "playing"
+        elif key == KEY_R:
+            mode = "menu"
+        return
+    if mode == "end":
+        if key == KEY_ENTER or key == KEY_SPACE:
+            new_game()
+        return
+    if mode != "playing":
+        return
+    if key == KEY_ESCAPE or key == KEY_P:
+        mode = "pause"
+        return
+    if phase == "parkour":
+        if key == KEY_R:
+            respawn_character()
+            announce("REAPARECER NO REINICIA EL RELOJ")
+        return
+    if phase == "puzzle":
+        if key == KEY_BACKSPACE and puzzle_kind == "code":
+            if puzzle_entry.length() > 0:
+                puzzle_entry = puzzle_entry.substr(0, puzzle_entry.length() - 1)
+            return
+        if key == KEY_ENTER and puzzle_kind == "code":
+            submit_code()
+            return
+        var digit: int = key_to_number(key)
+        if digit >= 0:
+            puzzle_input(digit)
+
+func key_to_number(key: int) -> int:
+    if key >= KEY_0 and key <= KEY_9:
+        return key - KEY_0
+    if key >= KEY_KP_0 and key <= KEY_KP_9:
+        return key - KEY_KP_0
+    return -1
+
+func new_game() -> void:
+    hearts = [MAX_HEARTS, MAX_HEARTS]
+    points = [0, 0]
+    victories = [0, 0]
+    window_damage = [0, 0]
+    round_success = [false, false]
+    round_index = 0
+    active_player = 0
+    rival_parkour_limit = PARKOUR_LIMIT
+    first_parkour_record = -1.0
+    elapsed = 0.0
+    fear = 0.0
+    mode = "playing"
+    build_level()
+    start_turn()
+    announce("RONDA 1 / 10 - JUGADOR 1")
+
+func start_turn() -> void:
+    if hearts[active_player] <= 0:
+        complete_turn(false)
+        return
+    attempts = 0
+    phase = "parkour"
+    parkour_limit = PARKOUR_LIMIT if active_player == 0 else rival_parkour_limit
+    parkour_remaining = parkour_limit
+    puzzle_remaining = PUZZLE_LIMIT
+    reset_puzzle()
+    respawn_character()
+
+func restart_round_after_loss() -> void:
+    # El jugador continua en el MISMO nivel. Se reinician los dos relojes.
+    if active_player == 0:
+        first_parkour_record = -1.0
+    phase = "parkour"
+    parkour_remaining = parkour_limit
+    puzzle_remaining = PUZZLE_LIMIT
+    reset_puzzle()
+    respawn_character()
+    attempts += 1
+    announce("REINTENTO DE RONDA - VIDA PERDIDA")
+
+func respawn_character() -> void:
+    var spawn: Rect2 = fixed_platforms[0]
+    character_pos = Vector2(spawn.position.x + 72.0, spawn.position.y - 16.0)
+    character_vel = Vector2.ZERO
+    grounded = true
+    jump_held = false
+    particles.clear()
+
+func announce(text: String) -> void:
+    message = text
+    message_left = 2.2
+
+func damage_window(player: int, amount: int = 1) -> void:
+    window_damage[player] = mini(3, window_damage[player] + amount)
+    shake = 7.0
+    flash = 0.60
+    fear = 1.0
+
+func lose_life(reason: String, restart_entire_round: bool, extra_damage: int = 0) -> void:
+    if mode != "playing":
+        return
+    hearts[active_player] = maxi(0, hearts[active_player] - 1)
+    damage_window(active_player, 1 + extra_damage)
+    play_tone(145.0, 0.23)
+    if hearts[active_player] <= 0:
+        announce("SIN VIDAS - TURNO PERDIDO")
+        complete_turn(false)
+    elif restart_entire_round:
+        restart_round_after_loss()
+    else:
+        respawn_character()
+        announce(reason + " - EL TIEMPO CONTINUA")
+
+func parkour_timeout() -> void:
+    parkour_remaining = 0.0
+    lose_life("TIEMPO DEL PARKOUR AGOTADO", true, 1)
+
+func puzzle_timeout() -> void:
+    puzzle_remaining = 0.0
+    # Regla solicitada: vuelve AL PRINCIPIO DEL PARKOUR y pierde una vida.
+    lose_life("PUZZLE SIN RESOLVER", true, 1)
+
+func reach_parkour_finish() -> void:
+    if phase != "parkour" or mode != "playing":
+        return
+    if active_player == 0:
+        first_parkour_record = clampf(parkour_limit - parkour_remaining, 0.1, PARKOUR_LIMIT)
+        rival_parkour_limit = first_parkour_record
+    phase = "puzzle"
+    puzzle_remaining = PUZZLE_LIMIT
+    configure_puzzle()
+    play_tone(675.0, 0.17)
+    announce("PUZZLE DESBLOQUEADO - 60 SEGUNDOS")
+
+func complete_puzzle() -> void:
+    if phase != "puzzle" or mode != "playing":
+        return
+    victories[active_player] += 1
+    round_success[active_player] = true
+    points[active_player] += 500 + int(parkour_remaining * 5.0) + int(puzzle_remaining * 8.0)
+    play_tone(820.0, 0.34)
+    complete_turn(true)
+
+func complete_turn(success: bool) -> void:
+    if mode != "playing":
+        return
+    round_success[active_player] = success
+    if active_player == 0:
+        # Si el primer jugador no supero el parkour, el rival recibe 120 s.
+        if first_parkour_record < 0.0:
+            rival_parkour_limit = PARKOUR_LIMIT
+        active_player = 1
+        if hearts[1] <= 0:
+            finish_round()
+        else:
+            start_turn()
+            announce("JUGADOR 2 - %.2f S PARA EL PARKOUR" % parkour_limit)
+        return
+    finish_round()
+
+func finish_round() -> void:
+    round_index += 1
+    if round_index >= MAX_ROUNDS or (hearts[0] <= 0 and hearts[1] <= 0):
+        mode = "end"
+        return
+    # Se permite continuar a un jugador superviviente; el jugador sin vidas se salta.
+    active_player = 0 if hearts[0] > 0 else 1
+    first_parkour_record = -1.0
+    rival_parkour_limit = PARKOUR_LIMIT
+    round_success = [false, false]
+    build_level()
+    start_turn()
+    announce("RONDA %d / %d - %s" % [round_index + 1, MAX_ROUNDS, ROUND_NAMES[round_index]])
+
+func build_level() -> void:
+    fixed_platforms.clear()
+    moving_platforms.clear()
+    spike_zones.clear()
+    saws.clear()
+    # Las cuatro plataformas de la primera ronda mantienen el trazado original.
+    match round_index:
+        0:
+            fixed_platforms = [Rect2(10,356,176,21), Rect2(268,325,130,20), Rect2(585,254,183,24)]
+            spike_zones = [Rect2(499,381,117,20)]
+        1:
+            fixed_platforms = [Rect2(10,402,170,20), Rect2(213,351,115,18), Rect2(391,297,110,18), Rect2(602,244,166,22)]
+            spike_zones = [Rect2(295,337,24,14)]
+        2:
+            fixed_platforms = [Rect2(10,404,166,20), Rect2(220,350,110,18), Rect2(393,294,110,18), Rect2(605,239,163,22)]
+            saws = [{"x":348.0,"y":294.0,"amp":23.0,"speed":1.15}]
+        3:
+            fixed_platforms = [Rect2(10,406,160,20), Rect2(207,355,118,18), Rect2(405,300,106,18), Rect2(599,247,169,22)]
+            spike_zones = [Rect2(300,341,22,14), Rect2(469,286,23,14)]
+        4:
+            fixed_platforms = [Rect2(10,404,156,20), Rect2(209,355,102,18), Rect2(389,299,103,18), Rect2(606,239,162,22)]
+            moving_platforms = [{"rect":Rect2(510,269,85,14),"amp":22.0,"speed":1.0,"vertical":false}]
+            saws = [{"x":364.0,"y":301.0,"amp":20.0,"speed":1.3}]
+        5:
+            fixed_platforms = [Rect2(10,409,159,20), Rect2(214,352,98,18), Rect2(392,292,101,18), Rect2(609,232,159,22)]
+            moving_platforms = [{"rect":Rect2(521,270,78,14),"amp":27.0,"speed":1.5,"vertical":false}]
+            spike_zones = [Rect2(274,338,28,14), Rect2(443,278,29,14)]
+        6:
+            fixed_platforms = [Rect2(10,408,163,20), Rect2(219,353,109,18), Rect2(398,299,102,18), Rect2(607,239,161,22)]
+            saws = [{"x":363.0,"y":297.0,"amp":25.0,"speed":1.7}, {"x":542.0,"y":249.0,"amp":19.0,"speed":1.4}]
+        7:
+            fixed_platforms = [Rect2(10,411,160,20), Rect2(215,354,103,18), Rect2(390,298,103,18), Rect2(609,236,159,22)]
+            moving_platforms = [{"rect":Rect2(512,269,79,14),"amp":30.0,"speed":1.8,"vertical":false}]
+            spike_zones = [Rect2(274,340,31,14), Rect2(446,284,30,14)]
+            saws = [{"x":361.0,"y":308.0,"amp":29.0,"speed":1.9}]
+        8:
+            fixed_platforms = [Rect2(10,411,164,20), Rect2(219,352,102,18), Rect2(393,292,103,18), Rect2(611,235,157,22)]
+            moving_platforms = [{"rect":Rect2(511,269,83,14),"amp":32.0,"speed":1.9,"vertical":false}]
+            spike_zones = [Rect2(283,338,27,14)]
+            saws = [{"x":355.0,"y":294.0,"amp":21.0,"speed":2.15}, {"x":555.0,"y":238.0,"amp":20.0,"speed":1.7}]
+        _:
+            fixed_platforms = [Rect2(10,411,163,20), Rect2(215,353,106,18), Rect2(395,294,101,18), Rect2(610,235,158,22)]
+            moving_platforms = [{"rect":Rect2(514,266,78,14),"amp":31.0,"speed":2.2,"vertical":false}]
+            spike_zones = [Rect2(281,339,28,14), Rect2(461,280,24,14)]
+            saws = [{"x":365.0,"y":304.0,"amp":27.0,"speed":2.4}, {"x":548.0,"y":242.0,"amp":21.0,"speed":2.05}]
+
+func platforms_now() -> Array[Rect2]:
+    var result: Array[Rect2] = fixed_platforms.duplicate()
+    for entry in moving_platforms:
+        var base: Rect2 = entry["rect"]
+        var amount: float = sin(elapsed * float(entry["speed"])) * float(entry["amp"])
+        var offset: Vector2 = Vector2(0.0,amount) if bool(entry["vertical"]) else Vector2(amount,0.0)
+        result.append(Rect2(base.position + offset,base.size))
+    return result
+
+func saw_center(saw: Dictionary) -> Vector2:
+    return Vector2(float(saw["x"]) + sin(elapsed * float(saw["speed"])) * float(saw["amp"]),float(saw["y"]))
+
+func _process(delta: float) -> void:
+    var dt: float = minf(delta, 0.04)
+    elapsed += dt
+    shake = maxf(0.0, shake - dt * 25.0)
+    flash = maxf(0.0, flash - dt * 1.7)
+    fear = maxf(0.0, fear - dt * 0.5)
+    message_left = maxf(0.0, message_left - dt)
+    puzzle_wrong = maxf(0.0, puzzle_wrong - dt)
+    update_audio()
+    if mode == "playing":
+        if phase == "parkour":
+            parkour_remaining = maxf(0.0, parkour_remaining - dt)
+            if parkour_remaining <= 0.0:
+                parkour_timeout()
+            else:
+                simulate_parkour(dt)
+        elif phase == "puzzle":
+            puzzle_remaining = maxf(0.0,puzzle_remaining - dt)
+            puzzle_show_for = maxf(0.0, puzzle_show_for - dt)
+            if puzzle_remaining <= 0.0:
+                puzzle_timeout()
+    for i in range(particles.size()-1, -1, -1):
+        var part: Dictionary = particles[i]
+        part["life"] = float(part["life"]) - dt
+        part["pos"] = Vector2(part["pos"]) + Vector2(part["velocity"]) * dt
+        if float(part["life"]) <= 0.0:
+            particles.remove_at(i)
+        else:
+            particles[i] = part
+    queue_redraw()
+
+func simulate_parkour(dt: float) -> void:
+    var axis: float = 0.0
+    if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+        axis -= 1.0
+    if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+        axis += 1.0
+    if axis != 0.0:
+        facing = int(sign(axis))
+    var run_speed: float = SPEED * (1.30 if Input.is_key_pressed(KEY_SHIFT) else 1.0)
+    character_vel.x = axis * run_speed
+    var jump_now: bool = Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
+    if grounded and jump_now and not jump_held:
+        character_vel.y = JUMP
+        grounded = false
+        play_tone(440.0, 0.06)
+    jump_held = jump_now
+    character_vel.y += GRAVITY * dt
+    var feet_before: float = character_pos.y + 16.0
+    character_pos.x = clampf(character_pos.x + character_vel.x*dt, 12.0, 755.0)
+    character_pos.y += character_vel.y*dt
+    grounded = false
+    if character_vel.y >= 0.0:
+        for platform in platforms_now():
+            if character_pos.x + 11.0 > platform.position.x and character_pos.x - 11.0 < platform.end.x and feet_before <= platform.position.y + 9.0 and character_pos.y + 16.0 >= platform.position.y:
+                character_pos.y = platform.position.y - 16.0
+                character_vel.y = 0.0
+                grounded = true
+                break
+    if character_pos.y > 585.0:
+        lose_life("CAIDA", false)
+        return
+    var foot: Vector2 = character_pos + Vector2(0.0,14.0)
+    for spikes in spike_zones:
+        if Rect2(spikes.position - Vector2(4.0,7.0),spikes.size+Vector2(8.0,8.0)).has_point(foot):
+            lose_life("PINCHOS", false)
+            return
+    for saw in saws:
+        if character_pos.distance_to(saw_center(saw)) < 24.0:
+            lose_life("SIERRA", false)
+            return
+    # Puerta al final de la ultima plataforma: al llegar se activa el puzzle.
+    var finish_platform: Rect2 = fixed_platforms[fixed_platforms.size()-1]
+    if character_pos.x > 708.0 and grounded and character_pos.y + 16.0 <= finish_platform.position.y + 5.0:
+        reach_parkour_finish()
+        return
+    if absf(character_vel.x) > 2.0 and grounded and randf() < 0.22:
+        particles.append({"pos":character_pos + Vector2(-float(facing)*8.0,12.0),"velocity":Vector2(randf_range(-16.0,16.0),randf_range(-42.0,-14.0)),"life":0.37})
+    anim_clock += dt * (12.0 if absf(character_vel.x)>2.0 else 2.0)
+
+func reset_puzzle() -> void:
+    puzzle_step = 0
+    puzzle_show_for = 0.0
+    puzzle_sequence.clear()
+    puzzle_answer = ""
+    puzzle_entry = ""
+    puzzle_switches.clear()
+    puzzle_target.clear()
+    puzzle_wrong = 0.0
+
+func configure_puzzle() -> void:
+    reset_puzzle()
+    match round_index:
+        0:
+            set_sequence("SELLOS DE LA GRUA",[1,3,2],false)
+        1:
+            set_sequence("RUNAS DEL BOSQUE",[2,4,1,3],false)
+        2:
+            set_sequence("ECOS DE LA CRIPTA",[3,1,4,2],true,5.5)
+        3:
+            set_code("GENERADOR DE LA FABRICA","9 + 8 = ?","17")
+        4:
+            set_switches("RED DE LA CIUDAD",4,[0,2,3])
+        5:
+            set_sequence("CRISTALES QUE SUSURRAN",[4,2,1,3,4],true,4.8)
+        6:
+            set_code("FARO DEL PUERTO","7 x 4 + 3 = ?","31")
+        7:
+            set_switches("NODOS DEL VOLCAN",5,[0,1,3,4])
+        8:
+            set_sequence("RECUERDO DEL HIELO",[2,4,1,3,2,1],true,4.2)
+        _:
+            set_sequence("TRONO DEL DESIERTO",[4,1,3,2,4,2,1],true,3.8)
+
+func set_sequence(title: String, sequence: Array, hidden: bool, seconds: float = 0.0) -> void:
+    puzzle_title = title
+    puzzle_kind = "memory" if hidden else "sequence"
+    for number in sequence:
+        puzzle_sequence.append(int(number))
+    puzzle_show_for = seconds
+    puzzle_hint = "MEMORIZA Y REPITE CON 1-4" if hidden else "PULSA LOS SELLOS EN EL ORDEN INDICADO"
+
+func set_code(title: String, clue: String, answer: String) -> void:
+    puzzle_title = title
+    puzzle_kind = "code"
+    puzzle_hint = clue
+    puzzle_answer = answer
+
+func set_switches(title: String, count: int, presses: Array) -> void:
+    puzzle_title = title
+    puzzle_kind = "switch"
+    puzzle_hint = "CADA TECLA ACTIVA SU NODO Y EL VECINO DERECHO"
+    puzzle_switches.resize(count)
+    puzzle_target.resize(count)
+    for i in range(count):
+        puzzle_switches[i] = 0
+        puzzle_target[i] = 0
+    for raw_press in presses:
+        var press: int = int(raw_press)
+        puzzle_target[press] = 1 - puzzle_target[press]
+        puzzle_target[(press+1)%count] = 1 - puzzle_target[(press+1)%count]
+
+func puzzle_input(digit: int) -> void:
+    if phase != "puzzle" or mode != "playing":
+        return
+    if puzzle_kind == "sequence" or puzzle_kind == "memory":
+        if digit < 1 or digit > 4 or puzzle_show_for > 0.0:
+            return
+        if digit == puzzle_sequence[puzzle_step]:
+            puzzle_step += 1
+            play_tone(460.0 + float(puzzle_step)*60.0,0.07)
+            if puzzle_step >= puzzle_sequence.size():
+                complete_puzzle()
+        else:
+            puzzle_step = 0
+            puzzle_wrong = 0.75
+            play_tone(160.0,0.12)
+        return
+    if puzzle_kind == "code":
+        if digit >= 0 and digit <= 9 and puzzle_entry.length() < 5:
+            puzzle_entry += str(digit)
+            play_tone(420.0,0.035)
+            if puzzle_entry.length() >= puzzle_answer.length():
+                submit_code()
+        return
+    if puzzle_kind == "switch":
+        if digit < 1 or digit > puzzle_switches.size():
+            return
+        var index: int = digit-1
+        puzzle_switches[index] = 1 - puzzle_switches[index]
+        var next_index: int = (index+1)%puzzle_switches.size()
+        puzzle_switches[next_index] = 1 - puzzle_switches[next_index]
+        play_tone(360.0 + float(index)*75.0,0.07)
+        if puzzle_switches == puzzle_target:
+            complete_puzzle()
+
+func submit_code() -> void:
+    if puzzle_entry == puzzle_answer:
+        complete_puzzle()
+    else:
+        puzzle_wrong = 0.75
+        puzzle_entry = ""
+        play_tone(165.0,0.14)
+
+func play_tone(hz: float, duration: float) -> void:
+    tone_hz = hz
+    tone_samples_left = int(duration * 22050.0)
+    tone_phase = 0.0
+
+func update_audio() -> void:
+    if audio_playback == null or not audio_playback.can_push_buffer(256):
+        return
+    var frames: PackedVector2Array = PackedVector2Array()
+    for i in range(256):
+        var volume: float = 0.0
+        if sound_enabled and tone_samples_left > 0:
+            volume = sin(tone_phase) * 0.16 * minf(float(tone_samples_left)/500.0, 1.0)
+            tone_phase += tone_hz * TAU / 22050.0
+            tone_samples_left -= 1
+        frames.append(Vector2(volume,volume))
+    audio_playback.push_buffer(frames)
+
+# ---------------------------- DIBUJO ----------------------------
+func box_fill(x: float,y: float,w: float,h: float,color: Color) -> void:
+    draw_rect(Rect2(x,y,w,h),color)
+
+func text_at(value: String,x: float,y: float,size: int = 21,color: Color = Color("bbccdd"),center: bool = false) -> void:
+    var px: float = x
+    if center:
+        px -= font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,size).x/2.0
+    draw_string(font,Vector2(px,y),value,HORIZONTAL_ALIGNMENT_LEFT,-1,size,color)
+
+func panel_line(x: float,y: float,w: float,h: float,color: Color,weight: float = 2.0) -> void:
+    draw_rect(Rect2(x,y,w,h),color,false,weight)
+
+func draw_ellipse(center: Vector2, radius_x: float, radius_y: float, color: Color) -> void:
+    var pts: PackedVector2Array = PackedVector2Array()
+    for i in range(24):
+        var a: float = float(i) * TAU / 24.0
+        pts.append(center + Vector2(cos(a) * radius_x, sin(a) * radius_y))
+    draw_colored_polygon(pts, color)
+
+func draw_heart(x: float,y: float,alive: bool) -> void:
+    var bitmap: Array[String] = ["01100110","11111111","11111111","01111110","00111100","00011000"]
+    var tone: Color = Color("ed4059") if alive else Color("526179")
+    for iy in range(bitmap.size()):
+        for ix in range(8):
+            if bitmap[iy][ix] == "1":
+                box_fill(x+float(ix*3),y+float(iy*3),3.0,3.0,tone)
+    if not alive:
+        box_fill(x+6.0,y+6.0,12.0,5.0,Color("0b1018"))
+
+func draw_window(player: int) -> void:
+    var ox: float = float(player) * PANEL_W
+    var x: float = ox + 143.0
+    var y: float = 76.0
+    var w: float = 538.0
+    var h: float = 270.0
+    # No dibujamos un panel opaco encima del fondo; solo el marco, grietas y el avatar del jugador.
+    panel_line(x, y, w, h, Color("2d3f53"), 4.0)
+    draw_line(Vector2(x + 78.0, y + 9.0), Vector2(x + 55.0, y + 86.0), Color(0.74, 0.86, 0.96, 0.12), 3.0)
+    draw_back_view_player(player, Vector2(ox + 380.0, 350.0))
+    var damage: int = window_damage[player]
+    if damage <= 0:
+        return
+    var centers: Array[Vector2] = [Vector2(x + 122.0, y + 84.0), Vector2(x + 356.0, y + 164.0), Vector2(x + 260.0, y + 110.0)]
+    for crack_index in range(damage):
+        var center: Vector2 = centers[crack_index]
+        for branch in range(9):
+            var angle: float = float(branch) * TAU / 9.0 + float(crack_index) * 0.31
+            var radius: float = 84.0 + float((branch * 17 + crack_index * 19) % 74)
+            var mid: Vector2 = center + Vector2.from_angle(angle) * (radius * 0.45)
+            var tip: Vector2 = center + Vector2.from_angle(angle + 0.10) * radius
+            mid.x = clampf(mid.x, x + 5.0, x + w - 5.0)
+            mid.y = clampf(mid.y, y + 5.0, y + h - 5.0)
+            tip.x = clampf(tip.x, x + 5.0, x + w - 5.0)
+            tip.y = clampf(tip.y, y + 5.0, y + h - 5.0)
+            draw_line(center, mid, Color("16222d"), 4.0)
+            draw_line(mid, tip, Color("17232e"), 3.0)
+            draw_line(center, mid, Color("b8cad8"), 1.4)
+            draw_line(mid, tip, Color("a9bfcd"), 1.4)
+    if damage >= 3:
+        draw_colored_polygon(PackedVector2Array([Vector2(x + 18.0, y + 12.0), Vector2(x + 196.0, y + 48.0), Vector2(x + 154.0, y + 190.0), Vector2(x + 61.0, y + 232.0)]), Color(0.02, 0.03, 0.05, 0.92))
+        draw_colored_polygon(PackedVector2Array([Vector2(x + 286.0, y + 18.0), Vector2(x + 468.0, y + 46.0), Vector2(x + 478.0, y + 214.0), Vector2(x + 334.0, y + 164.0)]), Color(0.02, 0.03, 0.05, 0.92))
+        for shard in range(12):
+            var sx: float = x + 16.0 + float(shard) * 44.0
+            var length: float = 13.0 + float((shard * 19) % 37)
+            draw_colored_polygon(PackedVector2Array([Vector2(sx, y), Vector2(sx + 26.0, y), Vector2(sx + 9.0, y + length)]), Color(0.59, 0.71, 0.81, 0.52))
+
+func draw_back_view_player(player: int, anchor: Vector2) -> void:
+    var shirt: Color = Color("4f6fd8") if player == 0 else Color("cb4c51")
+    var skin: Color = Color("d8c1a9")
+    var hair: Color = Color("b85f21")
+    var outline: Color = Color("11161f")
+    var pants: Color = Color("2b2340")
+    var shadow: Color = Color(0.0, 0.0, 0.0, 0.18)
+    # Sombra inferior
+    draw_ellipse(anchor + Vector2(0.0, 2.0), 115.0, 20.0, shadow)
+    # Cabeza
+    box_fill(anchor.x - 28.0, anchor.y - 98.0, 56.0, 48.0, skin)
+    box_fill(anchor.x - 34.0, anchor.y - 104.0, 68.0, 12.0, hair)
+    box_fill(anchor.x - 40.0, anchor.y - 92.0, 12.0, 26.0, hair)
+    box_fill(anchor.x + 28.0, anchor.y - 92.0, 12.0, 26.0, hair)
+    box_fill(anchor.x - 16.0, anchor.y - 64.0, 32.0, 12.0, skin)
+    # Cuerpo
+    box_fill(anchor.x - 58.0, anchor.y - 52.0, 116.0, 78.0, shirt)
+    box_fill(anchor.x - 72.0, anchor.y - 35.0, 26.0, 64.0, shirt)
+    box_fill(anchor.x + 46.0, anchor.y - 35.0, 26.0, 64.0, shirt)
+    box_fill(anchor.x - 76.0, anchor.y + 12.0, 28.0, 36.0, skin)
+    box_fill(anchor.x + 48.0, anchor.y + 12.0, 28.0, 36.0, skin)
+    box_fill(anchor.x - 42.0, anchor.y + 24.0, 32.0, 48.0, pants)
+    box_fill(anchor.x + 10.0, anchor.y + 24.0, 32.0, 48.0, pants)
+    # Contorno simple pixelado
+    panel_line(anchor.x - 28.0, anchor.y - 98.0, 56.0, 48.0, outline, 3.0)
+    panel_line(anchor.x - 58.0, anchor.y - 52.0, 116.0, 78.0, outline, 3.0)
+    panel_line(anchor.x - 72.0, anchor.y - 35.0, 26.0, 64.0, outline, 3.0)
+    panel_line(anchor.x + 46.0, anchor.y - 35.0, 26.0, 64.0, outline, 3.0)
+    panel_line(anchor.x - 42.0, anchor.y + 24.0, 32.0, 48.0, outline, 3.0)
+    panel_line(anchor.x + 10.0, anchor.y + 24.0, 32.0, 48.0, outline, 3.0)
+
+func _draw() -> void:
+    draw_texture_rect(horror_left,Rect2(0.0,0.0,768.0,450.0),false)
+    draw_texture_rect(horror_right,Rect2(768.0,0.0,768.0,450.0),false)
+    for player in range(2):
+        draw_window(player)
+        draw_player_header(player)
+    var game_side: int = active_player if mode != "menu" else 0
+    for side in range(2):
+        if side == game_side:
+            if phase == "puzzle" and mode != "menu":
+                draw_puzzle(float(side)*PANEL_W)
+            else:
+                draw_game(float(side)*PANEL_W)
+        else:
+            draw_waiting(float(side)*PANEL_W,side)
+    box_fill(0.0,446.0,SCREEN_W,11.0,Color("060b14"))
+    for xx in [0.0,768.0,1530.0]:
+        box_fill(xx,0.0,6.0,SCREEN_H,Color("08101c"))
+    for xx in [7.0,773.0]:
+        panel_line(xx,7.0,755.0,439.0,Color("2b4059"),2.0)
+        panel_line(xx,459.0,755.0,548.0,Color("2b4059"),2.0)
+    if flash > 0.0:
+        box_fill(0.0,0.0,SCREEN_W,SCREEN_H,Color(0.8,0.04,0.08,flash*0.17))
+    if mode == "menu":
+        draw_modal("UMBRAL","DIEZ RONDAS / DOS JUGADORES","ENTER - COMENZAR","PARKOUR 120 S  /  PUZZLE 60 S")
+    elif mode == "pause":
+        draw_modal("PAUSA","CRONOMETROS DETENIDOS","ENTER / ESC - CONTINUAR","R - VOLVER AL MENU")
+    elif mode == "end":
+        var winner: String = "EMPATE"
+        if points[0] > points[1]:
+            winner = "JUGADOR 1"
+        elif points[1] > points[0]:
+            winner = "JUGADOR 2"
+        draw_modal("FIN DE PARTIDA","GANADOR: " + winner,"ENTER - JUGAR OTRA VEZ","PUNTOS: %d - %d   /   RONDAS %d - %d" % [points[0],points[1],victories[0],victories[1]])
+
+func draw_player_header(player: int) -> void:
+    var ox: float = float(player)*PANEL_W
+    box_fill(ox+17.0,14.0,354.0,59.0,Color(0.015,0.019,0.027,0.96))
+    text_at("JUGADOR %d" % (player+1),ox+34.0,52.0,27,Color("c1d4e6"))
+    for i in range(MAX_HEARTS):
+        draw_heart(ox+234.0+float(i)*40.0,29.0,i < hearts[player])
+    if mode == "playing" and player == active_player:
+        box_fill(ox+12.0,9.0,6.0,6.0,Color("ed4356"))
+    var status: String = "INTACTA" if window_damage[player] == 0 else ("ROTA" if window_damage[player] >= 3 else "GRIETAS %d/3" % window_damage[player])
+    text_at(status,ox+24.0,425.0,15,Color("91a4ba"))
+    text_at("%d PTS" % points[player],ox+650.0,425.0,16,Color("a8bdd5"))
+    if fear > 0.0 and player == active_player:
+        box_fill(ox+145.0,78.0,536.0,265.0,Color(0.7,0.025,0.05,fear*0.08))
+
+func draw_stage_background(ox: float) -> void:
+    if round_index == 0:
+        draw_texture_rect(first_stage,Rect2(ox,STAGE_TOP,768.0,574.0),false)
+        return
+    var texture: Texture2D = level_backgrounds[round_index-1]
+    box_fill(ox,STAGE_TOP,768.0,574.0,Color("07111a"))
+    # Parallax horizontal: la fuente se desplaza lentamente, pero el jugador no.
+    var src_w: float = 940.0
+    var src_x: float = (1440.0-src_w)*0.5 + sin(elapsed*(0.20+float(round_index)*0.025))*65.0
+    src_x = clampf(src_x,0.0,1440.0-src_w)
+    draw_texture_rect_region(texture,Rect2(ox+9.0,STAGE_TOP+12.0,750.0,430.0),Rect2(src_x,0.0,src_w,396.0))
+    box_fill(ox+9.0,STAGE_TOP+425.0,750.0,149.0,Color("101620"))
+    for ix in range(26):
+        var dx: float = ox+float(ix)*30.0
+        box_fill(dx,STAGE_TOP+441.0,29.0,2.0,Color("34404d"))
+        box_fill(dx+1.0,STAGE_TOP+471.0,26.0,2.0,Color("2b394b"))
+    # Niebla dinamica muy suave, pintada sin shaders para exportacion web.
+    for i in range(5):
+        var fog_x: float = ox + float(i)*185.0 - 45.0 + sin(elapsed*0.28+float(i))*12.0
+        box_fill(fog_x,STAGE_TOP+394.0+float(i%2)*17.0,168.0,27.0,Color(0.60,0.77,0.86,0.035))
+
+func draw_platform(rectangle: Rect2,ox: float,moving: bool) -> void:
+    var x: float = ox + rectangle.position.x
+    var y: float = STAGE_TOP + rectangle.position.y
+    var tint: Color = STAGE_COLORS[round_index]
+    box_fill(x,y,rectangle.size.x,rectangle.size.y,Color("1b2634"))
+    box_fill(x,y,rectangle.size.x,5.0,tint)
+    for stripe in range(int(rectangle.size.x/19.0)):
+        var sx: float = x+float(stripe)*19.0
+        draw_line(Vector2(sx+2.0,y+4.0),Vector2(sx+11.0,y+11.0),Color("0e141e"),5.0)
+    box_fill(x,y+rectangle.size.y-4.0,rectangle.size.x,4.0,Color("0a1019"))
+    if moving:
+        text_at("<>" ,x+rectangle.size.x*0.5,y-11.0,15,tint,true)
+
+func draw_game(ox: float) -> void:
+    draw_stage_background(ox)
+    if round_index > 0:
+        for pl in fixed_platforms:
+            draw_platform(pl,ox,false)
+        for entry in moving_platforms:
+            var base: Rect2 = entry["rect"]
+            var amount: float = sin(elapsed*float(entry["speed"]))*float(entry["amp"])
+            var offset: Vector2 = Vector2(0.0,amount) if bool(entry["vertical"]) else Vector2(amount,0.0)
+            draw_platform(Rect2(base.position+offset,base.size),ox,true)
+        for spikes in spike_zones:
+            draw_spikes(ox,spikes)
+        for saw in saws:
+            draw_saw(ox,saw_center(saw))
+    var last: Rect2 = fixed_platforms[fixed_platforms.size()-1]
+    var door_x: float = ox+714.0
+    var door_y: float = STAGE_TOP+last.position.y-60.0
+    box_fill(door_x,door_y,34.0,60.0,Color("090f1a"))
+    panel_line(door_x,door_y,34.0,60.0,STAGE_COLORS[round_index],3.0)
+    box_fill(door_x+26.0,door_y+27.0,3.0,7.0,STAGE_COLORS[round_index])
+    # Personaje pixel art original.
+    var sprite: Texture2D = runner[int(anim_clock)%runner.size()]
+    var actor_pos: Vector2 = Vector2(ox+character_pos.x-12.0,STAGE_TOP+character_pos.y-16.0)
+    if facing < 0:
+        draw_set_transform(actor_pos+Vector2(24.0,0.0),0.0,Vector2(-1.0,1.0))
+        draw_texture(sprite,Vector2.ZERO)
+        draw_set_transform(Vector2.ZERO)
+    else:
+        draw_texture(sprite,actor_pos)
+    for particle in particles:
+        var p: Vector2 = particle["pos"]
+        box_fill(ox+p.x,STAGE_TOP+p.y,3.0,3.0,Color(0.82,0.86,0.92,clampf(float(particle["life"])*2.0,0.0,1.0)))
+    draw_stage_hud(ox)
+
+func draw_spikes(ox: float,area: Rect2) -> void:
+    var count: int = maxi(1,int(area.size.x/15.0))
+    for j in range(count):
+        var x: float = ox+area.position.x+float(j)*15.0
+        var y: float = STAGE_TOP+area.position.y
+        draw_colored_polygon(PackedVector2Array([Vector2(x,y+area.size.y),Vector2(x+8.0,y),Vector2(x+15.0,y+area.size.y)]),Color("bdc8d2"))
+
+func draw_saw(ox: float,center: Vector2) -> void:
+    var c: Vector2 = Vector2(ox+center.x,STAGE_TOP+center.y)
+    draw_circle(c,20.0,Color("243344"))
+    for i in range(8):
+        var angle: float = float(i)*TAU/8.0 + elapsed*3.0
+        draw_line(c+Vector2.from_angle(angle)*13.0,c+Vector2.from_angle(angle)*24.0,Color("bacbd5"),5.0)
+    draw_circle(c,7.0,Color("d85159"))
+    draw_circle(c,3.0,Color("271218"))
+
+func draw_stage_hud(ox: float) -> void:
+    box_fill(ox+18.0,469.0,312.0,49.0,Color(0.025,0.044,0.067,0.96))
+    text_at("RONDA %02d/10  |  PARKOUR" % (round_index+1),ox+30.0,502.0,21,Color("c2d8ee"))
+    box_fill(ox+545.0,465.0,209.0,70.0,Color(0.02,0.04,0.063,0.97))
+    var clock_color: Color = Color("ee5767") if parkour_remaining < 12.0 else Color("c9dcef")
+    text_at("%06.2f s" % parkour_remaining,ox+644.0,497.0,29,clock_color,true)
+    text_at("LIMITE %.2f s" % parkour_limit,ox+648.0,522.0,16,Color("d8b973"),true)
+    box_fill(ox+20.0,STAGE_TOP+521.0,490.0,30.0,Color(0.025,0.04,0.064,0.84))
+    text_at(ROUND_NAMES[round_index],ox+29.0,STAGE_TOP+543.0,18,STAGE_COLORS[round_index])
+    text_at("A/D MOVER   ESPACIO SALTAR   SHIFT CORRER",ox+19.0,STAGE_TOP+569.0,15,Color("b2c0ce"))
+    if message_left > 0.0:
+        box_fill(ox+172.0,535.0,425.0,41.0,Color(0.025,0.04,0.065,0.93))
+        text_at(message,ox+384.0,563.0,17,Color("f4d6a3"),true)
+
+func draw_puzzle(ox: float) -> void:
+    draw_stage_background(ox)
+    box_fill(ox+13.0,463.0,741.0,532.0,Color(0.025,0.039,0.064,0.94))
+    panel_line(ox+22.0,472.0,724.0,515.0,STAGE_COLORS[round_index],3.0)
+    box_fill(ox+28.0,482.0,706.0,48.0,Color("101928"))
+    text_at("PUZZLE  |  %s" % puzzle_title,ox+384.0,515.0,23,Color("d7e5f0"),true)
+    var clock_color: Color = Color("ef5e67") if puzzle_remaining < 12.0 else Color("f1c976")
+    text_at("%05.2f s" % puzzle_remaining,ox+384.0,574.0,35,clock_color,true)
+    text_at("TIENES 60 SEGUNDOS PARA RESOLVERLO",ox+384.0,607.0,18,Color("acbdd0"),true)
+    text_at(puzzle_hint,ox+384.0,661.0,19,STAGE_COLORS[round_index],true)
+    if puzzle_kind == "sequence" or puzzle_kind == "memory":
+        draw_sequence_puzzle(ox)
+    elif puzzle_kind == "code":
+        draw_code_puzzle(ox)
+    elif puzzle_kind == "switch":
+        draw_switch_puzzle(ox)
+    if puzzle_wrong > 0.0:
+        text_at("ERROR - PRUEBA DE NUEVO",ox+384.0,918.0,22,Color("ef6774"),true)
+    text_at("ESC PAUSA   /   M SONIDO",ox+384.0,978.0,17,Color("788ca4"),true)
+
+func draw_sequence_puzzle(ox: float) -> void:
+    var showing: bool = puzzle_kind == "sequence" or puzzle_show_for > 0.0
+    if puzzle_kind == "memory":
+        if showing:
+            text_at("MEMORIZA: %.1f s" % puzzle_show_for,ox+384.0,700.0,19,Color("dce0e7"),true)
+        else:
+            text_at("AHORA REPITE LA SECUENCIA",ox+384.0,700.0,19,Color("dce0e7"),true)
+    var count: int = puzzle_sequence.size()
+    var cell_w: float = minf(78.0,570.0/float(count))
+    var left: float = ox+384.0-float(count)*cell_w*0.5
+    for i in range(count):
+        var x: float = left+float(i)*cell_w+4.0
+        var correct: bool = i < puzzle_step
+        var tile_color: Color = Color("2c5e62") if correct else Color("192639")
+        box_fill(x,727.0,cell_w-8.0,91.0,tile_color)
+        panel_line(x,727.0,cell_w-8.0,91.0,Color("66c9bd") if correct else Color("56687d"),2.0)
+        var label: String = str(puzzle_sequence[i]) if showing else "?"
+        text_at(label,x+(cell_w-8.0)*0.5,786.0,39,Color("e5ecf5"),true)
+    text_at("TECLAS 1, 2, 3, 4",ox+384.0,863.0,23,Color("b6c9dc"),true)
+    text_at("PROGRESO %d / %d" % [puzzle_step,count],ox+384.0,894.0,17,Color("8ba4bd"),true)
+
+func draw_code_puzzle(ox: float) -> void:
+    box_fill(ox+194.0,710.0,380.0,109.0,Color("0c1623"))
+    panel_line(ox+194.0,710.0,380.0,109.0,Color("7799a7"),2.0)
+    text_at(puzzle_entry+"_",ox+384.0,789.0,58,Color("e2eaf4"),true)
+    text_at("TECLEA EL NUMERO  |  ENTER CONFIRMAR",ox+384.0,870.0,20,Color("b3c7d8"),true)
+    text_at("RETROCESO PARA BORRAR",ox+384.0,901.0,17,Color("899caf"),true)
+
+func draw_switch_puzzle(ox: float) -> void:
+    var count: int = puzzle_switches.size()
+    var cell: float = 100.0
+    var start_x: float = ox+384.0-float(count)*cell*0.5
+    for i in range(count):
+        var x: float = start_x+float(i)*cell+7.0
+        var lit: bool = puzzle_switches[i] == 1
+        box_fill(x,720.0,86.0,115.0,Color("255850") if lit else Color("181f2f"))
+        panel_line(x,720.0,86.0,115.0,Color("68e9cc") if lit else Color("62728e"),2.0)
+        text_at(str(i+1),x+43.0,760.0,23,Color("d6e2ed"),true)
+        draw_circle(Vector2(x+43.0,798.0),13.0,Color("76f5c7") if lit else Color("38465c"))
+        text_at("OBJETIVO %d" % puzzle_target[i],x+43.0,855.0,14,Color("c4d4e3"),true)
+    text_at("PULSA 1-%d HASTA IGUALAR LOS OBJETIVOS" % count,ox+384.0,900.0,18,Color("a0bad0"),true)
+
+func draw_waiting(ox: float,side: int) -> void:
+    box_fill(ox,455.0,768.0,569.0,Color("05070c"))
+    box_fill(ox+9.0,463.0,750.0,535.0,Color("090d14"))
+    var pulse: float = 0.78+0.15*sin(elapsed*2.0)
+    text_at("ESPERANDO",ox+384.0,690.0,28,Color(0.51,0.65,0.86,pulse),true)
+    text_at("TURNO DEL JUGADOR %d" % (active_player+1),ox+384.0,732.0,26,Color(0.51,0.65,0.86,pulse),true)
+    text_at("RONDA %d DE 10" % (round_index+1),ox+384.0,782.0,19,Color("7b8da9"),true)
+    text_at("VIDAS %d  -  PUNTOS %d" % [hearts[side],points[side]],ox+384.0,832.0,18,Color("6f829a"),true)
+    if side == 1 and active_player == 0:
+        text_at("HEREDARAS EL TIEMPO USADO EN EL PARKOUR",ox+384.0,869.0,16,Color("8ba1bf"),true)
+
+func draw_modal(title: String,subtitle: String,action: String,detail: String) -> void:
+    box_fill(0.0,0.0,SCREEN_W,SCREEN_H,Color(0.0,0.0,0.0,0.76))
+    box_fill(350.0,258.0,836.0,503.0,Color("050a13"))
+    panel_line(350.0,258.0,836.0,503.0,Color("425772"),4.0)
+    box_fill(367.0,276.0,802.0,8.0,Color("b83f57"))
+    text_at(title,768.0,388.0,59,Color("e0e7ed"),true)
+    text_at(subtitle,768.0,458.0,26,Color("aabdd2"),true)
+    text_at(action,768.0,576.0,28,Color("e9c077"),true)
+    text_at(detail,768.0,637.0,22,Color("abbcd0"),true)
+    text_at("A/D MOVER - ESPACIO SALTAR - SHIFT CORRER",768.0,700.0,17,Color("8294b0"),true)
+    text_at("ESC PAUSA - M SONIDO",768.0,727.0,16,Color("8294b0"),true)

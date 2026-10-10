@@ -1,0 +1,14 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/ui/renderer.gd" id="2_renderer"]
+[ext_resource type="Script" path="res://scripts/game/sound.gd" id="3_sound"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Renderer" type="Node2D" parent="."]
+script = ExtResource("2_renderer")
+
+[node name="Sound" type="Node" parent="."]
+script = ExtResource("3_sound")
