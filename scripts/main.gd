@@ -12,7 +12,13 @@ const PARKOUR_LIMIT = Config.PARKOUR_LIMIT
 const PUZZLE_LIMIT = Config.PUZZLE_LIMIT
 const ROUND_NAMES = Config.ROUND_NAMES
 
-var mode: String = "menu"   # menu, playing, pause, end
+var mode: String = "menu"   # menu, playing, pause, eliminated, end
+# Transicion de eliminacion: salida del monstruo, breve pantalla negra y siguiente turno.
+var elimination_stage: int = 0  # 0 = salida / 1 = mensaje negro
+var elimination_elapsed: float = 0.0
+var elimination_exit_seconds: float = 0.75
+var elimination_black_seconds: float = 1.40
+var menu_index: int = 0 # 0 = jugar, 1 = salir
 var phase: String = "parkour" # parkour, puzzle
 var active_player: int = 0
 var round_index: int = 0
@@ -62,8 +68,21 @@ func _input(event: InputEvent) -> void:
     if key == KEY_M:
         sound.sound_enabled = not sound.sound_enabled
     if mode == "menu":
+        if key == KEY_UP or key == KEY_W:
+            menu_index = maxi(0, menu_index - 1)
+            return
+        if key == KEY_DOWN or key == KEY_S:
+            menu_index = mini(1, menu_index + 1)
+            return
+        if key == KEY_ESCAPE:
+            get_tree().quit()
+            return
         if key == KEY_ENTER or key == KEY_SPACE:
-            new_game()
+            if menu_index == 0:
+                new_game()
+            else:
+                get_tree().quit()
+            return
         return
     if mode == "pause":
         if key == KEY_ESCAPE or key == KEY_P or key == KEY_ENTER:
@@ -105,6 +124,9 @@ func key_to_number(key: int) -> int:
     return -1
 
 func new_game() -> void:
+    menu_index = 0
+    elimination_stage = 0
+    elimination_elapsed = 0.0
     hearts = [MAX_HEARTS, MAX_HEARTS]
     points = [0, 0]
     victories = [0, 0]
@@ -162,8 +184,12 @@ func lose_life(reason: String, restart_entire_round: bool, extra_damage: int = 0
     damage_window(active_player, 1 + extra_damage)
     sound.play_tone(145.0, 0.23)
     if hearts[active_player] <= 0:
+        # No transferimos el turno aun: primero sale el monstruo y
+        # se muestra ELIMINADO. Asi no se salta la animacion.
         announce("SIN VIDAS - TURNO PERDIDO")
-        complete_turn(false)
+        elimination_stage = 0
+        elimination_elapsed = 0.0
+        mode = "eliminated"
     elif restart_entire_round:
         restart_round_after_loss()
     else:
@@ -233,6 +259,20 @@ func finish_round() -> void:
 
 func _process(delta: float) -> void:
     var dt: float = minf(delta, 0.04)
+    if mode == "eliminated":
+        # Los relojes, colisiones y puzzles quedan congelados durante el aviso.
+        elimination_elapsed += dt
+        if elimination_stage == 0 and elimination_elapsed >= elimination_exit_seconds:
+            elimination_stage = 1
+            elimination_elapsed = 0.0
+        elif elimination_stage == 1 and elimination_elapsed >= elimination_black_seconds:
+            elimination_elapsed = 0.0
+            elimination_stage = 0
+            mode = "playing"
+            # Se utiliza el flujo de turnos original, sin duplicarlo.
+            complete_turn(false)
+        renderer.queue_redraw()
+        return
     elapsed += dt
     shake = maxf(0.0, shake - dt * 25.0)
     flash = maxf(0.0, flash - dt * 1.7)

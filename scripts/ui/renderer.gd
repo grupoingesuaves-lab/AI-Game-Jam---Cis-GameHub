@@ -19,21 +19,20 @@ const HERO_FRAME_HEIGHT: float = 56.0
 const HERO_FRAME_COUNT: int = 9
 var hero_blue: Texture2D
 var hero_red: Texture2D
+var menu_background: Texture2D
 
 func _read_png(path: String) -> Texture2D:
-    # En una copia recien descomprimida, Godot puede evaluar scripts
-    # antes de haber terminado de construir su cache de importacion.
-    # Image.load_from_file puede leer el PNG fuente directamente.
-    if FileAccess.file_exists(path):
-        var image: Image = Image.load_from_file(path)
-        if image != null and not image.is_empty():
-            return ImageTexture.create_from_image(image)
-    # En una exportacion, Godot podria empaquetar texturas importadas
-    # pero no incluir el PNG fuente como archivo independiente.
-    if ResourceLoader.exists(path):
-        var resource: Resource = ResourceLoader.load(path)
+    # Prefiere la textura importada: tambien funciona en una exportacion.
+    if ResourceLoader.exists(path, "Texture2D"):
+        var resource: Resource = ResourceLoader.load(path, "Texture2D")
         if resource is Texture2D:
             return resource as Texture2D
+    # Respaldo sin advertencias si la primera importacion sigue pendiente.
+    if FileAccess.file_exists(path):
+        var image: Image = Image.new()
+        var error: int = image.load_png_from_buffer(FileAccess.get_file_as_bytes(path))
+        if error == OK and not image.is_empty():
+            return ImageTexture.create_from_image(image)
     push_error("UMBRAL: no se pudo cargar la imagen: " + path)
     return null
 
@@ -52,6 +51,7 @@ func _ready() -> void:
         level_backgrounds.append(_read_png("res://assets/backgrounds/level_%02d.png" % n))
     hero_blue = _read_png("res://assets/characters/personaje_azul.png")
     hero_red = _read_png("res://assets/characters/personaje_rojo.png")
+    menu_background = _read_png("res://assets/ui/menu_inicio.png")
     queue_redraw()
 
 func box_fill(x: float,y: float,w: float,h: float,color: Color) -> void:
@@ -86,6 +86,14 @@ func draw_window(player: int) -> void:
     draw_texture(texture, Vector2(float(player) * Config.PANEL_W, 0.0))
 
 func _draw() -> void:
+    if game.mode == "eliminated" and game.elimination_stage == 1:
+        # Corte negro de pantalla completa para el mensaje de eliminacion.
+        box_fill(0.0, 0.0, Config.SCREEN_W, Config.SCREEN_H, Color.BLACK)
+        text_at("ELIMINADO", Config.SCREEN_W * 0.5, Config.SCREEN_H * 0.5,
+                78, Color("dbe9f6"), true)
+        text_at("JUGADOR %d" % (game.active_player + 1), Config.SCREEN_W * 0.5,
+                Config.SCREEN_H * 0.5 + 66.0, 28, Color("8095ab"), true)
+        return
     draw_texture_rect(horror_left,Rect2(0.0,0.0,768.0,450.0),false)
     draw_texture_rect(horror_right,Rect2(768.0,0.0,768.0,450.0),false)
     for player in range(2):
@@ -109,7 +117,7 @@ func _draw() -> void:
     if game.flash > 0.0:
         box_fill(0.0,0.0,Config.SCREEN_W,Config.SCREEN_H,Color(0.8,0.04,0.08,game.flash*0.17))
     if game.mode == "menu":
-        draw_modal("UMBRAL","DIEZ RONDAS / DOS JUGADORES","ENTER - COMENZAR","PARKOUR 120 S  /  PUZZLE 60 S")
+        draw_start_menu()
     elif game.mode == "pause":
         draw_modal("PAUSA","CRONOMETROS DETENIDOS","ENTER / ESC - CONTINUAR","R - VOLVER AL MENU")
     elif game.mode == "end":
@@ -119,6 +127,34 @@ func _draw() -> void:
         elif game.points[1] > game.points[0]:
             winner = "JUGADOR 2"
         draw_modal("FIN DE PARTIDA","GANADOR: " + winner,"ENTER - JUGAR OTRA VEZ","PUNTOS: %d - %d   /   RONDAS %d - %d" % [game.points[0],game.points[1],game.victories[0],game.victories[1]])
+
+func draw_start_menu() -> void:
+    if menu_background != null:
+        draw_texture_rect(menu_background, Rect2(0.0, 0.0, Config.SCREEN_W, Config.SCREEN_H), false)
+    else:
+        draw_modal("UMBRAL", "", "ENTER - JUGAR", "ESC - SALIR")
+        return
+    var selected: int = int(game.menu_index)
+    var play_rect: Rect2 = Rect2(585.0, 464.0, 365.0, 84.0)
+    var quit_rect: Rect2 = Rect2(644.0, 588.0, 250.0, 58.0)
+    var current: Rect2 = play_rect if selected == 0 else quit_rect
+    # Se elimina el cuadro extra para que no se vea corrido sobre JUGAR.
+    # La seleccion se indica solo con marcadores laterales, respetando el arte base del menu.
+    var cy: float = current.position.y + current.size.y * 0.5
+    draw_colored_polygon(PackedVector2Array([
+        Vector2(current.position.x - 24.0, cy),
+        Vector2(current.position.x - 10.0, cy - 10.0),
+        Vector2(current.position.x - 10.0, cy + 10.0)
+    ]), Color(0.49, 0.90, 1.0, 0.95))
+    draw_colored_polygon(PackedVector2Array([
+        Vector2(current.position.x + current.size.x + 24.0, cy),
+        Vector2(current.position.x + current.size.x + 10.0, cy - 10.0),
+        Vector2(current.position.x + current.size.x + 10.0, cy + 10.0)
+    ]), Color(0.49, 0.90, 1.0, 0.95))
+    # Ayuda compacta en la parte inferior, sin invadir la composicion.
+    box_fill(488.0, 915.0, 560.0, 42.0, Color(0.02, 0.05, 0.10, 0.52))
+    panel_line(488.0, 915.0, 560.0, 42.0, Color(0.24, 0.40, 0.55, 0.45), 1.0)
+    text_at("↑ ↓ MOVER   ENTER ELEGIR   ESC SALIR", Config.SCREEN_W * 0.5, 943.0, 16, Color("c8def3"), true)
 
 func draw_player_header(player: int) -> void:
     var ox: float = float(player)*Config.PANEL_W

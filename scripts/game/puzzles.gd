@@ -29,6 +29,31 @@ func reset_puzzle() -> void:
 
 func configure_puzzle() -> void:
     reset_puzzle()
+    # Para un mismo nivel, el jugador 2 siempre recibe un reto distinto.
+    # El jugador 1 conserva intactas sus preguntas originales.
+    if game.active_player == 1:
+        match game.round_index:
+            0:
+                set_sequence("SELLOS DEL CONTRAPESO", [4,1,2], false)
+            1:
+                set_sequence("RUNAS DEL SENDERO", [3,1,4,2], false)
+            2:
+                set_sequence("SOMBRAS DE LA CRIPTA", [4,2,1,3], true, 5.5)
+            3:
+                set_code("CALDERA DE LA FABRICA", "6 x 3 + 4 = ?", "22")
+            4:
+                set_switches("CIRCUITOS DE LA CIUDAD", 4, [1,3])
+            5:
+                set_sequence("FRAGMENTOS DEL ABISMO", [1,4,3,2,1], true, 4.8)
+            6:
+                set_code("BRUJULA DEL PUERTO", "8 x 3 - 5 = ?", "19")
+            7:
+                set_switches("VALVULAS DEL VOLCAN", 5, [2,4])
+            8:
+                set_sequence("HUELLAS DEL HIELO", [3,1,4,2,3,4], true, 4.2)
+            _:
+                set_sequence("ALTAR DEL DESIERTO", [1,2,4,3,1,3,2], true, 3.8)
+        return
     match game.round_index:
         0:
             set_sequence("SELLOS DE LA GRUA",[1,3,2],false)

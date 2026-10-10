@@ -1,7 +1,7 @@
 extends Node2D
 ## Capa adicional del monstruo; NO modifica ninguna regla ni sprite original.
-## Los PNG se leen directamente (Image.load_from_file), sin exigir que
-## Godot haya importado previamente las 200 texturas como recursos.
+## Texturas importadas mediante ResourceLoader para funcionar al exportar.
+## Respaldo PNG solo cuando Godot aun no ha terminado de importar.
 
 const STEPS: int = 25
 const ANIMATION_FRAMES: int = 4
@@ -41,14 +41,20 @@ func _ready() -> void:
     queue_redraw()
 
 func _read_png(path: String) -> Texture2D:
-    if not FileAccess.file_exists(path):
-        push_error("Falta la imagen del monstruo: " + path)
-        return null
-    var image: Image = Image.load_from_file(path)
-    if image == null or image.is_empty():
-        push_error("No se pudo decodificar el PNG del monstruo: " + path)
-        return null
-    return ImageTexture.create_from_image(image)
+    # Godot importa los PNG como texturas. Esta ruta funciona en editor y exportacion.
+    if ResourceLoader.exists(path, "Texture2D"):
+        var texture: Resource = ResourceLoader.load(path, "Texture2D")
+        if texture is Texture2D:
+            return texture as Texture2D
+    # Respaldo para la primera apertura: evita Image.load_from_file,
+    # que muestra advertencias y no sirve para recursos empaquetados.
+    if FileAccess.file_exists(path):
+        var image: Image = Image.new()
+        var error: int = image.load_png_from_buffer(FileAccess.get_file_as_bytes(path))
+        if error == OK and not image.is_empty():
+            return ImageTexture.create_from_image(image)
+    push_error("No se pudo cargar la textura del monstruo: " + path)
+    return null
 
 func _load_current_animation(player: int, step: int) -> void:
     if player == loaded_player and step == loaded_step:
@@ -63,6 +69,19 @@ func _load_current_animation(player: int, step: int) -> void:
 
 func _process(delta: float) -> void:
     if game == null:
+        return
+    # Durante la eliminacion termina de salir por el borde exterior de su ventana.
+    # En la pantalla negra se oculta, y el siguiente jugador lo recibe de cero.
+    if game.get("mode") == "eliminated":
+        if int(game.get("elimination_stage")) == 1:
+            previous_player = -1
+            transfer_phase = 0
+            transfer_destination = -1
+            loaded_player = -1
+            loaded_step = -1
+        else:
+            animation_clock += minf(delta, 0.08)
+        queue_redraw()
         return
     # El monstruo no aparece en el menu ni en la pantalla final.
     if game.get("mode") != "playing":
@@ -132,7 +151,12 @@ func _process(delta: float) -> void:
     queue_redraw()
 
 func _draw() -> void:
-    if game == null or game.get("mode") != "playing" or previous_player < 0:
+    if game == null or previous_player < 0:
+        return
+    var current_mode: String = str(game.get("mode"))
+    if current_mode != "playing" and current_mode != "eliminated":
+        return
+    if current_mode == "eliminated" and int(game.get("elimination_stage")) != 0:
         return
     if loaded_player != previous_player or loaded_frames.size() != ANIMATION_FRAMES:
         return
@@ -147,7 +171,15 @@ func _draw() -> void:
     var alpha: float = 0.92 * appearance
     var offset_x: float = 0.0
     var direction: float = 1.0 if previous_player == 0 else -1.0
-    if transfer_phase == 1:
+    if current_mode == "eliminated":
+        # Animacion de salida completa: izquierda sale por la izquierda,
+        # derecha por la derecha. Nunca invade la ventana del rival.
+        var exit_seconds: float = float(game.get("elimination_exit_seconds"))
+        var exit_t: float = clampf(float(game.get("elimination_elapsed")) / exit_seconds, 0.0, 1.0)
+        var slide_t: float = exit_t * exit_t * (3.0 - 2.0 * exit_t)
+        offset_x = (-1.0 if previous_player == 0 else 1.0) * 900.0 * slide_t
+        alpha *= 1.0 - clampf((exit_t - 0.55) / 0.45, 0.0, 1.0)
+    elif transfer_phase == 1:
         var hide_t: float = clampf(transfer_elapsed / TRANSFER_HIDE_DURATION, 0.0, 1.0)
         alpha *= 1.0 - hide_t
         offset_x = direction * TRANSFER_SLIDE * hide_t * hide_t
